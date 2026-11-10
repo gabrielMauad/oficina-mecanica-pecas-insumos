@@ -15,7 +15,7 @@ public sealed class HealthCheckReadinessDegradedTests : IAsyncLifetime
 {
     private const string JwtSecret = "integration-test-jwt-secret-minimum-32-chars!!";
 
-    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder()
+    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder("postgres:15.1")
         .WithDatabase("pecas_insumos")
         .WithUsername("postgres")
         .WithPassword("postgres")

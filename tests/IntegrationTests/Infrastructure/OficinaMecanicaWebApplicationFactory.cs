@@ -32,7 +32,7 @@ public sealed class OficinaMecanicaWebApplicationFactory
     private const string ClienteAuthIssuer = "oficina-mecanica-auth";
     private const string Audience = "oficina-mecanica-api";
 
-    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder()
+    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder("postgres:15.1")
         .WithDatabase("pecas_insumos")
         .WithUsername("postgres")
         .WithPassword("postgres")
