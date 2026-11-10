@@ -1,10 +1,12 @@
 using MassTransit;
+using MassTransit.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using OficinaMecanica.Contracts.IntegrationEvents;
 using PecasInsumos.Infrastructure.Messaging;
 using SharedKernel.Application;
 using SharedKernel.Application.Metrics;
+using SharedKernel.Domain;
 
 namespace PecasInsumos.Infrastructure.Tests.Messaging;
 
@@ -104,6 +106,37 @@ public class MensageriaExtensionsTests
         await bus.Publish(evento);
 
         // Assert
-        publishEndpoint.Verify(p => p.Publish((object)evento, It.IsAny<CancellationToken>()), Times.Once);
+        publishEndpoint.Verify(p => p.Publish(
+            (object)evento, typeof(EstoqueBaixaFalhouIntegrationEvent), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact(DisplayName = "MassTransitIntegrationEventBus — publicar via tipo abstrato roteia pelo tipo concreto do evento")]
+    public async Task Bus_PublicandoViaTipoAbstrato_DeveUsarTipoConcreto()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddMassTransitTestHarness();
+        await using var provider = services.BuildServiceProvider(true);
+        var harness = provider.GetRequiredService<ITestHarness>();
+        await harness.Start();
+        var bus = new MassTransitIntegrationEventBus(harness.Bus);
+        IIntegrationEvent evento = new EstoqueBaixaFalhouIntegrationEvent(
+            Guid.NewGuid(), DateTime.UtcNow, Guid.NewGuid(), Guid.NewGuid(), "sem estoque");
+
+        // Act
+        await bus.Publish(evento);
+
+        // Assert
+        Assert.True(await harness.Published.Any<EstoqueBaixaFalhouIntegrationEvent>(
+            m => m.Context.Message.EventId == evento.EventId));
+    }
+
+    [Fact(DisplayName = "MassTransitIntegrationEventBus — evento nulo lança ArgumentNullException")]
+    public async Task Bus_EventoNulo_DeveLancarArgumentNullException()
+    {
+        var bus = new MassTransitIntegrationEventBus(new Mock<IPublishEndpoint>().Object);
+
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => bus.Publish<EstoqueBaixaFalhouIntegrationEvent>(null!));
     }
 }
