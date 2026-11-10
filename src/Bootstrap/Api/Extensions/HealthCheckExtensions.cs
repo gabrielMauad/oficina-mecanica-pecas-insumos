@@ -6,7 +6,9 @@ namespace Api.Extensions;
 
 /// <summary>
 /// Configura health checks separando liveness (processo vivo, sem dependências) de
-/// readiness (apto a atender tráfego, inclui conectividade com o PostgreSQL).
+/// readiness (apto a atender tráfego). A readiness agrega os checks com a tag "ready": o do
+/// PostgreSQL, registrado aqui, e o "masstransit-bus", que o MassTransit registra
+/// automaticamente com a mesma tag (estado do barramento de mensageria).
 /// </summary>
 public static class HealthCheckExtensions
 {
@@ -36,7 +38,7 @@ public static class HealthCheckExtensions
             ResponseWriter = WriteResponseAsync
         }).AllowAnonymous();
 
-        // Readiness: apto a atender tráfego, inclui checks marcados com a tag "ready" (ex.: banco).
+        // Readiness: apto a atender tráfego, inclui checks marcados com a tag "ready" (PostgreSQL e barramento MassTransit).
         endpoints.MapHealthChecks("/healthz/ready", new HealthCheckOptions
         {
             Predicate = check => check.Tags.Contains(ReadyTag),
