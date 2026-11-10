@@ -10,7 +10,6 @@
   <Folder Name="/src/Modules/PecasInsumos/">
     <Project Path="src/Modules/PecasInsumos/PecasInsumos.Adapters/PecasInsumos.Adapters.csproj" />
     <Project Path="src/Modules/PecasInsumos/PecasInsumos.Application/PecasInsumos.Application.csproj" />
-    <Project Path="src/Modules/PecasInsumos/PecasInsumos.Contracts/PecasInsumos.Contracts.csproj" />
     <Project Path="src/Modules/PecasInsumos/PecasInsumos.Domain/PecasInsumos.Domain.csproj" />
     <Project Path="src/Modules/PecasInsumos/PecasInsumos.Infrastructure/PecasInsumos.Infrastructure.csproj" />
     <Project Path="src/Modules/PecasInsumos/PecasInsumos.Web/PecasInsumos.Web.csproj" />

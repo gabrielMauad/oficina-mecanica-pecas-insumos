@@ -27,7 +27,6 @@
     <ProjectReference Include="..\..\..\Contracts\OficinaMecanica.Contracts\OficinaMecanica.Contracts.csproj" />
     <ProjectReference Include="..\PecasInsumos.Adapters\PecasInsumos.Adapters.csproj" />
     <ProjectReference Include="..\PecasInsumos.Application\PecasInsumos.Application.csproj" />
-    <ProjectReference Include="..\PecasInsumos.Contracts\PecasInsumos.Contracts.csproj" />
     <ProjectReference Include="..\PecasInsumos.Domain\PecasInsumos.Domain.csproj" />
   </ItemGroup>
 

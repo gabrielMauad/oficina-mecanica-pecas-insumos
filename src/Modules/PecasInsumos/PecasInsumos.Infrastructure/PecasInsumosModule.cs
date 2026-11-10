@@ -10,7 +10,6 @@ using PecasInsumos.Application.Commands.AdicionarPecaInsumo;
 using PecasInsumos.Application.Gateways;
 using PecasInsumos.Application.IntegrationEventHandlers;
 using PecasInsumos.Application.Queries.ListarPecasInsumos;
-using PecasInsumos.Contracts.Queries;
 using PecasInsumos.Infrastructure.Messaging;
 using PecasInsumos.Infrastructure.Persistence;
 using PecasInsumos.Infrastructure.Queries;
@@ -50,13 +49,6 @@ public static class PecasInsumosModule
         #region Queries de leitura
 
         services.AddScoped<IListarPecasInsumosQuery, ListarPecasInsumosQueryImpl>();
-
-        #endregion
-
-        #region Queries públicas (contratos expostos aos outros módulos)
-
-        services.AddScoped<IPecaInsumoQuery, PecaInsumoQuery>();
-        services.AddScoped<IPecasInsumosDisponibilidadeQuery, PecasInsumosDisponibilidadeQuery>();
 
         #endregion
 
