@@ -1,0 +1,70 @@
+# Serviço pecas-insumos + o Postgres exclusivo dele.
+#
+# Depende do docker-compose.infra.yml do repositório oficina-mecanica-app, que cria a rede Docker
+# externa "oficina-local" e sobe o LocalStack (SQS/SNS, container oficina-localstack) e o Jaeger
+# (container oficina-jaeger). Ordem de subida:
+#   1. no repositório oficina-mecanica-app:  docker compose -f docker-compose.infra.yml up -d
+#   2. neste repositório:                    docker compose up --build
+#
+# API em http://localhost:8083 (Scalar em /scalar) e Postgres em localhost:5434.
+services:
+  oficina-pecas-insumos:
+    build:
+      context: .
+      dockerfile: src/Bootstrap/Api/Dockerfile
+    container_name: oficina-pecas-insumos
+    ports:
+      - "8083:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - ConnectionStrings__Default=Host=oficina-pecas-insumos-postgres;Port=5432;Username=oficina;Password=oficina-dev-pass;Database=pecas_insumos;SSL Mode=Disable
+      - Jwt__Secret=docker-dev-secret-key-replace-in-prod-000
+      - Jwt__Audience=oficina-mecanica-api
+      - Jwt__ValidIssuers__0=oficina-mecanica-app
+      - Jwt__ValidIssuers__1=oficina-mecanica-auth
+      - OpenApi__Enabled=true
+      # Mensageria (MassTransit sobre Amazon SQS/SNS) apontando para o LocalStack da rede oficina-local.
+      - Mensageria__Transporte=AmazonSqs
+      - Mensageria__Regiao=us-east-1
+      - Mensageria__ServiceUrl=http://oficina-localstack:4566
+      - Mensageria__AccessKey=test
+      - Mensageria__SecretKey=test
+      # OTLP: destino configurável por variável de ambiente padrão do OpenTelemetry (ADR-004). Aqui
+      # aponta para o Jaeger compartilhado; em outro ambiente basta trocar o endpoint (e, se preciso,
+      # OTEL_EXPORTER_OTLP_HEADERS) para o coletor/APM real — nenhum código muda. O Jaeger all-in-one
+      # não implementa o serviço OTLP de logs; essas tentativas falham em silêncio.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://oficina-jaeger:4317
+      - OTEL_SERVICE_NAME=oficina-mecanica-pecas-insumos
+    depends_on:
+      oficina-pecas-insumos-postgres:
+        condition: service_healthy
+    networks:
+      - oficina-local
+
+  oficina-pecas-insumos-postgres:
+    image: postgres:16
+    restart: always
+    container_name: oficina-pecas-insumos-postgres
+    environment:
+      POSTGRES_DB: pecas_insumos
+      POSTGRES_USER: oficina
+      POSTGRES_PASSWORD: oficina-dev-pass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oficina -d pecas_insumos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - pecas_insumos_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - oficina-local
+
+volumes:
+  pecas_insumos_postgres_data:
+
+networks:
+  oficina-local:
+    external: true

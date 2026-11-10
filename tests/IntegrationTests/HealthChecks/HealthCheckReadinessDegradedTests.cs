@@ -1,0 +1,83 @@
+using System.Net;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Testcontainers.PostgreSql;
+
+namespace IntegrationTests.HealthChecks;
+
+/// <summary>
+/// Sobe seu próprio container PostgreSQL (independente do compartilhado pela coleção
+/// "Integration") para poder derrubá-lo depois do startup e comprovar que /healthz/ready
+/// fica não-saudável enquanto /healthz/live continua respondendo normalmente.
+/// </summary>
+public sealed class HealthCheckReadinessDegradedTests : IAsyncLifetime
+{
+    private const string JwtSecret = "integration-test-jwt-secret-minimum-32-chars!!";
+
+    private readonly PostgreSqlContainer _db = new PostgreSqlBuilder()
+        .WithDatabase("pecas_insumos")
+        .WithUsername("postgres")
+        .WithPassword("postgres")
+        .Build();
+
+    private WebApplicationFactory<Program> _factory = null!;
+
+    public async ValueTask InitializeAsync()
+    {
+        await _db.StartAsync();
+
+        _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        {
+            builder.UseEnvironment("Testing");
+            builder.ConfigureAppConfiguration((_, cfg) =>
+            {
+                cfg.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:Default"] = _db.GetConnectionString(),
+                    ["Jwt:Secret"] = JwtSecret,
+
+                    // Este teste monta o próprio WebApplicationFactory (não usa o
+                    // OficinaMecanicaWebApplicationFactory compartilhado), então precisa repetir aqui
+                    // as chaves que a configuração da aplicação exige no startup: issuer/audience são
+                    // obrigatórios na validação do JWT (RFC-001 §4.1) e a documentação OpenAPI/Scalar
+                    // fica desligada nos testes.
+                    ["Jwt:Issuer"] = "oficina-mecanica-app",
+                    ["Jwt:Audience"] = "oficina-mecanica-api",
+                    ["Jwt:ValidIssuers:0"] = "oficina-mecanica-app",
+                    ["Jwt:ValidIssuers:1"] = "oficina-mecanica-auth",
+                    ["Mensageria:Transporte"] = "InMemory",
+                    ["OpenApi:Enabled"] = "false",
+                });
+            });
+        });
+
+        // Força a criação do host (e a execução das migrations) enquanto o banco está de pé.
+        using var warmupClient = _factory.CreateClient();
+        var warmup = await warmupClient.GetAsync("/healthz/live");
+        warmup.EnsureSuccessStatusCode();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _factory.DisposeAsync();
+        await _db.DisposeAsync();
+    }
+
+    [Fact(DisplayName = "GET /healthz/ready — retorna 503 quando o PostgreSQL está indisponível; /healthz/live continua 200")]
+    public async Task Ready_DeveRetornar503_QuandoPostgreSqlIndisponivel_LiveContinuaSaudavel()
+    {
+        // Arrange — derruba o banco depois que a aplicação já subiu
+        await _db.StopAsync();
+
+        using var client = _factory.CreateClient();
+
+        // Act
+        var readyResponse = await client.GetAsync("/healthz/ready");
+        var liveResponse = await client.GetAsync("/healthz/live");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, readyResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, liveResponse.StatusCode);
+    }
+}
