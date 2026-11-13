@@ -110,6 +110,93 @@ public class EstoqueIntegrationEventTests
         Assert.Equal(estoqueInicial, aposEstorno.QuantidadeEmEstoque);
     }
 
+    [Fact(DisplayName = "OrcamentoGerado com duas peças e a segunda sem estoque → nenhuma é baixada e EstoqueBaixaFalhou é publicado")]
+    public async Task OrcamentoGerado_ComSegundaPecaSemEstoque_NaoBaixaNenhumaEPublicaFalha()
+    {
+        // Arrange
+        using var client = _factory.CreateAuthenticatedClient(await _factory.GetAuthTokenAsync());
+        var primeiraId = await CriarPecaAsync(client, TestData.Nome("Filtro de Ar Atomico"), 30.00m, 10);
+        var segundaId = await CriarPecaAsync(client, TestData.Nome("Sensor Atomico"), 120.00m, 1);
+        var harness = _factory.Harness;
+        await harness.Start();
+        var ordemServicoId = Guid.NewGuid();
+        var orcamentoId = Guid.NewGuid();
+
+        var evento = new OrcamentoGeradoIntegrationEvent(
+            Guid.NewGuid(), DateTime.UtcNow, ordemServicoId, orcamentoId,
+            [new ItemPecaEventDto(primeiraId, 3), new ItemPecaEventDto(segundaId, 2)]);
+
+        // Act
+        await harness.Bus.Publish(evento);
+
+        // Assert
+        Assert.True(
+            await AguardarAsync(() => harness.Published
+                .Select<EstoqueBaixaFalhouIntegrationEvent>(e => e.Context.Message.OrcamentoId == orcamentoId)
+                .Any()),
+            "EstoqueBaixaFalhou não foi publicado.");
+
+        var falha = harness.Published
+            .Select<EstoqueBaixaFalhouIntegrationEvent>(e => e.Context.Message.OrcamentoId == orcamentoId)
+            .Single().Context.Message;
+        Assert.Equal(ordemServicoId, falha.OrdemServicoId);
+        Assert.Contains("estoque", falha.Motivo, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(10, (await ObterPecaAsync(client, primeiraId)).QuantidadeEmEstoque);
+        Assert.Equal(1, (await ObterPecaAsync(client, segundaId)).QuantidadeEmEstoque);
+    }
+
+    [Fact(DisplayName = "OrcamentoGerado com duas peças disponíveis → ambas baixadas e nenhuma falha publicada")]
+    public async Task OrcamentoGerado_ComDuasPecasDisponiveis_BaixaAmbasSemPublicarFalha()
+    {
+        // Arrange
+        using var client = _factory.CreateAuthenticatedClient(await _factory.GetAuthTokenAsync());
+        var primeiraId = await CriarPecaAsync(client, TestData.Nome("Filtro de Combustivel Atomico"), 30.00m, 10);
+        var segundaId = await CriarPecaAsync(client, TestData.Nome("Bobina Atomica"), 120.00m, 4);
+        var harness = _factory.Harness;
+        await harness.Start();
+        var orcamentoId = Guid.NewGuid();
+
+        var evento = new OrcamentoGeradoIntegrationEvent(
+            Guid.NewGuid(), DateTime.UtcNow, Guid.NewGuid(), orcamentoId,
+            [new ItemPecaEventDto(primeiraId, 3), new ItemPecaEventDto(segundaId, 4)]);
+
+        // Act
+        await harness.Bus.Publish(evento);
+
+        // Assert
+        Assert.Equal(7, (await AguardarEstoqueAsync(client, primeiraId, 7)).QuantidadeEmEstoque);
+        Assert.Equal(0, (await AguardarEstoqueAsync(client, segundaId, 0)).QuantidadeEmEstoque);
+        Assert.False(harness.Published
+            .Select<EstoqueBaixaFalhouIntegrationEvent>(e => e.Context.Message.OrcamentoId == orcamentoId)
+            .Any());
+    }
+
+    [Fact(DisplayName = "OrcamentoRejeitado com uma peça inexistente → nenhuma peça é estornada")]
+    public async Task OrcamentoRejeitado_ComPecaInexistente_NaoEstornaNenhuma()
+    {
+        // Arrange
+        using var client = _factory.CreateAuthenticatedClient(await _factory.GetAuthTokenAsync());
+        var pecaId = await CriarPecaAsync(client, TestData.Nome("Amortecedor Atomico"), 200.00m, 6);
+        var harness = _factory.Harness;
+        await harness.Start();
+        var consumer = harness.GetConsumerHarness<PecasInsumos.Infrastructure.Messaging.Consumers.OrcamentoRejeitadoConsumer>();
+        var orcamentoId = Guid.NewGuid();
+
+        var evento = new OrcamentoRejeitadoIntegrationEvent(
+            Guid.NewGuid(), DateTime.UtcNow, Guid.NewGuid(), orcamentoId,
+            [new ItemPecaEventDto(pecaId, 2), new ItemPecaEventDto(Guid.NewGuid(), 1)]);
+
+        // Act
+        await harness.Bus.Publish(evento);
+
+        // Assert
+        Assert.True(await AguardarAsync(() => consumer.Consumed
+            .Select<OrcamentoRejeitadoIntegrationEvent>(e => e.Context.Message.OrcamentoId == orcamentoId)
+            .Any()));
+        Assert.Equal(6, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
+    }
+
     // ── Helpers privados ──
 
     /// <summary>
@@ -128,6 +215,19 @@ public class EstoqueIntegrationEventTests
         }
 
         return peca;
+    }
+
+    /// <summary>
+    /// Espera, por polling, até a condição ser verdadeira ou o limite de espera. Mesmo motivo de
+    /// <see cref="AguardarEstoqueAsync"/>: o <c>Any</c> assíncrono do harness usa a espera por inatividade.
+    /// </summary>
+    private static async Task<bool> AguardarAsync(Func<bool> condicao)
+    {
+        var limite = DateTime.UtcNow.AddSeconds(15);
+        while (!condicao() && DateTime.UtcNow < limite)
+            await Task.Delay(50);
+
+        return condicao();
     }
 
     private static async Task<PecaDto> ObterPecaAsync(HttpClient client, Guid pecaId)

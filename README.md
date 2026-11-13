@@ -35,10 +35,25 @@ consumo: 1 s, 5 s e 10 s. Os tipos das mensagens ficam em `src/Contracts/Oficina
 
 Os consumers (`PecasInsumos.Infrastructure/Messaging/Consumers`) apenas delegam aos handlers da
 Application. A Application publica por `IIntegrationEventBus`, implementado sobre `IPublishEndpoint`
-(`MassTransitIntegrationEventBus`); nenhum evento é publicado por este serviço até o momento.
+(`MassTransitIntegrationEventBus`).
+
+A baixa de estoque do orçamento é **atômica**: todas as peças ou nenhuma, em um único `SaveChanges`.
+Se falhar por motivo de negócio (peça inexistente, desativada, sem estoque ou item inválido), o serviço
+publica `EstoqueBaixaFalhouIntegrationEvent`. Falhas de infraestrutura lançam exceção e seguem o retry do
+consumer. O estorno também é atômico, mas uma falha de estorno só é registrada em log.
 
 Configuração (`Mensageria__*`): `Transporte` (`AmazonSqs` padrão, ou `InMemory`), `Regiao`
 (`us-east-1`), `ServiceUrl`, `AccessKey` e `SecretKey` (só em ambiente local com LocalStack; vazios na AWS).
+
+### Limitações conhecidas
+
+- **Concorrência**: a peça não tem token de concorrência; duas baixas simultâneas da mesma peça podem
+  perder uma atualização (lost update). Evolução futura: token de concorrência (`xmin`) no registro da
+  peça, com o conflito caindo no retry do consumer.
+- **Reentrega**: não há deduplicação por `EventId` (sem inbox). Uma reentrega de `OrcamentoGerado` ou
+  `OrcamentoRejeitado` baixa ou estorna de novo; numa reentrega de baixa já aplicada, o estoque pode ficar
+  insuficiente e gerar um `EstoqueBaixaFalhou` indevido, fazendo a OS rejeitar o orçamento sem estornar o
+  que a primeira entrega baixou. Evolução futura: tabela de mensagens processadas (inbox).
 
 ## Como rodar localmente
 

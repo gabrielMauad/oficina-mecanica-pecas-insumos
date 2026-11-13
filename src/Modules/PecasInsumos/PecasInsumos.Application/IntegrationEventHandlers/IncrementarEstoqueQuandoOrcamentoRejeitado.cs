@@ -1,7 +1,8 @@
 using MediatR;
 using Microsoft.Extensions.Logging;
 using OficinaMecanica.Contracts.IntegrationEvents;
-using PecasInsumos.Application.Commands.IncrementarEstoque;
+using PecasInsumos.Application.Commands;
+using PecasInsumos.Application.Commands.EstornarEstoqueDoOrcamento;
 using SharedKernel.Application;
 
 namespace PecasInsumos.Application.IntegrationEventHandlers;
@@ -21,18 +22,18 @@ public sealed class IncrementarEstoqueQuandoOrcamentoRejeitado : IIntegrationEve
 
     public async Task Handle(OrcamentoRejeitadoIntegrationEvent integrationEvent, CancellationToken ct = default)
     {
-        foreach (var peca in integrationEvent.Pecas)
+        var itens = integrationEvent.Pecas
+            .Select(p => new ItemEstoque(p.PecaInsumoId, p.Quantidade))
+            .ToList();
+
+        var result = await _sender.Send(new EstornarEstoqueDoOrcamentoCommand(itens), ct);
+        if (result.IsFailure)
         {
-            var result = await _sender.Send(new IncrementarEstoqueCommand(peca.PecaInsumoId, peca.Quantidade), ct);
-            if (result.IsFailure)
-            {
-                _logger.LogError(
-                    "Falha ao estornar estoque da peça {PecaInsumoId} para o orçamento rejeitado {OrcamentoId}: {Erro}. Peças restantes não foram processadas.",
-                    peca.PecaInsumoId,
-                    integrationEvent.OrcamentoId,
-                    result.Error);
-                return;
-            }
+            _logger.LogError(
+                "Falha ao estornar o estoque do orçamento rejeitado {OrcamentoId} da OS {OrdemServicoId}; nenhuma peça foi estornada: {Erro}",
+                integrationEvent.OrcamentoId,
+                integrationEvent.OrdemServicoId,
+                result.Error.Message);
         }
     }
 }
