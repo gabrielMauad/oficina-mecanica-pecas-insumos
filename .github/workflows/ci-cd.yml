@@ -95,7 +95,7 @@ jobs:
             /d:sonar.token="$SONAR_TOKEN" \
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" \
-            /d:sonar.coverage.exclusions="**/Migrations/**,**/Program.cs"
+            /d:sonar.coverage.exclusions="**/Migrations/**,**/Program.cs,**/obj/**"
 
       - name: Build
         run: dotnet build "${{ env.SOLUTION }}" --no-restore --configuration Release

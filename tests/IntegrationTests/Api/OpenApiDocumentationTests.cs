@@ -63,7 +63,11 @@ public class OpenApiDocumentationTests
             .ToList();
         Assert.NotEmpty(operacoesDoController);
         Assert.All(operacoesDoController, op =>
-            Assert.True(op.TryGetProperty("security", out var security) && security.GetArrayLength() > 0));
+        {
+            Assert.True(op.TryGetProperty("security", out var security) && security.GetArrayLength() > 0);
+            // O requisito deve referenciar o esquema Bearer; um objeto vazio ({}) nao protege nada.
+            Assert.True(security[0].TryGetProperty("Bearer", out _));
+        });
         Assert.False(paths.GetProperty("/").GetProperty("get").TryGetProperty("security", out _));
     }
 
