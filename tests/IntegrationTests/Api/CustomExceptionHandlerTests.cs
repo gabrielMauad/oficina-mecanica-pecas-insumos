@@ -30,7 +30,7 @@ public class CustomExceptionHandlerTests
         var httpContext = new DefaultHttpContext();
         var excecao = new ArgumentException("valor inválido");
 
-        var tratado = await handler.TryHandleAsync(httpContext, excecao, CancellationToken.None);
+        var tratado = await handler.TryHandleAsync(httpContext, excecao, TestContext.Current.CancellationToken);
 
         Assert.True(tratado);
         Assert.Equal(StatusCodes.Status400BadRequest, httpContext.Response.StatusCode);
@@ -50,7 +50,7 @@ public class CustomExceptionHandlerTests
         var httpContext = new DefaultHttpContext();
 
         var tratado = await handler.TryHandleAsync(
-            httpContext, new InvalidOperationException("falha interna"), CancellationToken.None);
+            httpContext, new InvalidOperationException("falha interna"), TestContext.Current.CancellationToken);
 
         Assert.True(tratado);
         Assert.Equal(StatusCodes.Status500InternalServerError, httpContext.Response.StatusCode);
@@ -64,7 +64,7 @@ public class CustomExceptionHandlerTests
         var handler = new CustomExceptionHandler(new ProblemDetailsServiceFake(resultado: false));
 
         var tratado = await handler.TryHandleAsync(
-            new DefaultHttpContext(), new Exception("x"), CancellationToken.None);
+            new DefaultHttpContext(), new Exception("x"), TestContext.Current.CancellationToken);
 
         Assert.False(tratado);
     }
