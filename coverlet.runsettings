@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>opencover</Format>
+          <!--
+            Unicas exclusoes do calculo de cobertura (mesma lista de sonar.coverage.exclusions nos workflows):
+            - Migrations: codigo gerado pelo EF Core a partir do modelo.
+            - Program.cs: composicao do host, sem logica propria.
+            - obj: saida de source generators (ex.: OpenAPI), codigo gerado em tempo de build.
+          -->
+          <ExcludeByFile>**/Migrations/**,**/Program.cs,**/obj/**</ExcludeByFile>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

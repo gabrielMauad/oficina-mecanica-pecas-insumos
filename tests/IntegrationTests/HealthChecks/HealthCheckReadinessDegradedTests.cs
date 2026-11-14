@@ -11,6 +11,10 @@ namespace IntegrationTests.HealthChecks;
 /// "Integration") para poder derrubá-lo depois do startup e comprovar que /healthz/ready
 /// fica não-saudável enquanto /healthz/live continua respondendo normalmente.
 /// </summary>
+// Na colecao "Integration" para nao rodar em paralelo com os demais hosts de teste: no Windows, o
+// provedor de log do Event Log era descartado durante o encerramento deste host quando outros hosts
+// eram criados e descartados ao mesmo tempo.
+[Collection("Integration")]
 public sealed class HealthCheckReadinessDegradedTests : IAsyncLifetime
 {
     private const string JwtSecret = "integration-test-jwt-secret-minimum-32-chars!!";
