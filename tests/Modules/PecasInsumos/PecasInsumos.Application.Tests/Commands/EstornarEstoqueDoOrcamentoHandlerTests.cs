@@ -95,4 +95,17 @@ public class EstornarEstoqueDoOrcamentoHandlerTests
         Assert.True(result.IsSuccess);
         _gatewayMock.VerifyNoOtherCalls();
     }
+
+    [Fact(DisplayName = "Estorno sem baixa registrada: sucesso com desfecho SemBaixaRegistrada")]
+    public async Task Handle_QuandoSemBaixaRegistrada_RetornaSemBaixaRegistrada()
+    {
+        GatewayRetorna(new ResultadoMovimentacaoEmLote(false, [], SemBaixaRegistrada: true));
+
+        var result = await _handler.Handle(
+            new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.NewGuid(), 1)]),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(DesfechoMovimentacaoDoOrcamento.SemBaixaRegistrada, result.Value);
+    }
 }

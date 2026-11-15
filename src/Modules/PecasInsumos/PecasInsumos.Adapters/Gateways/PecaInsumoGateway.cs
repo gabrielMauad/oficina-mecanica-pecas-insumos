@@ -64,12 +64,13 @@ public sealed class PecaInsumoGateway : IPecaInsumoGateway
                 f.PecaInsumoId,
                 f.Nome,
                 MotivoDa(f, incremento),
-                f.QuantidadeEmEstoque)).ToList());
+                f.QuantidadeEmEstoque)).ToList(),
+            resultado.SemBaixaRegistrada);
     }
 
     private static MotivoFalhaMovimentacao MotivoDa(FalhaMovimentacaoRecord falha, bool incremento) =>
         !falha.Encontrada ? MotivoFalhaMovimentacao.NaoEncontrada
-        : !falha.Ativo ? MotivoFalhaMovimentacao.Desativada
         : incremento ? MotivoFalhaMovimentacao.LimiteDeEstoque
+        : !falha.Ativo ? MotivoFalhaMovimentacao.Desativada
         : MotivoFalhaMovimentacao.EstoqueInsuficiente;
 }

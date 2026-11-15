@@ -135,23 +135,29 @@ public class EstoqueConcorrenciaTests
         using var client = await NovoClientAsync();
         var pecaId = await CriarPecaAsync(client, estoque: 10);
         var orcamentoId = Guid.NewGuid();
+        Assert.True((await EnviarAsync(new BaixarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 2)]))).IsSuccess);
+        Assert.Equal(8, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
 
         var resultados = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ =>
             Task.Run(() => EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 2)])))));
 
         Assert.All(resultados, r => Assert.True(r.IsSuccess));
         Assert.Equal(1, resultados.Count(r => r.Value == DesfechoMovimentacaoDoOrcamento.Aplicada));
-        Assert.Equal(12, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
+        Assert.Equal(10, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
     }
 
     [Fact(DisplayName = "Estornos concorrentes de orçamentos distintos: nenhum incremento é perdido")]
     public async Task EstornosConcorrentes_NaoPerdemIncrementos()
     {
         using var client = await NovoClientAsync();
-        var pecaId = await CriarPecaAsync(client, estoque: 0);
+        var pecaId = await CriarPecaAsync(client, estoque: 50);
+        var orcamentos = Enumerable.Range(0, 25).Select(_ => Guid.NewGuid()).ToList();
+        foreach (var orcamentoId in orcamentos)
+            Assert.True((await EnviarAsync(new BaixarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 2)]))).IsSuccess);
+        Assert.Equal(0, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
 
-        await Task.WhenAll(Enumerable.Range(0, 25).Select(_ =>
-            Task.Run(() => EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(pecaId, 2)])))));
+        await Task.WhenAll(orcamentos.Select(orcamentoId =>
+            Task.Run(() => EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 2)])))));
 
         Assert.Equal(50, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
     }
@@ -161,11 +167,87 @@ public class EstoqueConcorrenciaTests
     {
         using var client = await NovoClientAsync();
         var pecaId = await CriarPecaAsync(client, estoque: int.MaxValue);
+        var orcamentoId = Guid.NewGuid();
+        Assert.True((await EnviarAsync(new BaixarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 1)]))).IsSuccess);
+        (await client.PatchAsJsonAsync($"/api/v1/pecas-insumos/{pecaId}/estoque/entrada", new { Quantidade = 1 })).EnsureSuccessStatusCode();
 
-        var resultado = await EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(pecaId, 1)]));
+        var resultado = await EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 1)]));
 
         Assert.True(resultado.IsFailure);
         Assert.Equal(int.MaxValue, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
+    }
+
+    [Fact(DisplayName = "Estorno sem baixa registrada não altera o estoque")]
+    public async Task Estorno_SemBaixa_NaoAlteraEstoque()
+    {
+        using var client = await NovoClientAsync();
+        var pecaId = await CriarPecaAsync(client, estoque: 10);
+
+        var resultado = await EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(pecaId, 3)]));
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(DesfechoMovimentacaoDoOrcamento.SemBaixaRegistrada, resultado.Value);
+        Assert.Equal(10, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
+    }
+
+    [Fact(DisplayName = "Estorno antes da baixa: a baixa posterior é ignorada e não publica falha")]
+    public async Task EstornoAntesDaBaixa_BaixaPosteriorEhIgnorada()
+    {
+        using var client = await NovoClientAsync();
+        var pecaId = await CriarPecaAsync(client, estoque: 10);
+        var orcamentoId = Guid.NewGuid();
+        var harness = _factory.Harness;
+        await harness.Start();
+        var consumidor = harness.GetConsumerHarness<OrcamentoGeradoConsumer>();
+
+        Assert.True((await EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 3)]))).IsSuccess);
+        await harness.Bus.Publish(new OrcamentoGeradoIntegrationEvent(
+            Guid.NewGuid(), DateTime.UtcNow, Guid.NewGuid(), orcamentoId, [new ItemPecaEventDto(pecaId, 3)]));
+
+        Assert.True(await AguardarAsync(() => consumidor.Consumed
+            .Select<OrcamentoGeradoIntegrationEvent>(e => e.Context.Message.OrcamentoId == orcamentoId).Any()));
+        Assert.Equal(10, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
+        Assert.False(harness.Published
+            .Select<EstoqueBaixaFalhouIntegrationEvent>(e => e.Context.Message.OrcamentoId == orcamentoId).Any());
+    }
+
+    [Fact(DisplayName = "Corrida paralela baixa x estorno do mesmo orçamento termina com o estoque inalterado")]
+    public async Task CorridaBaixaXEstorno_MantemEstoque()
+    {
+        using var client = await NovoClientAsync();
+        var pecaId = await CriarPecaAsync(client, estoque: 10);
+
+        for (int rodada = 0; rodada < 15; rodada++)
+        {
+            var orcamentoId = Guid.NewGuid();
+            var itens = new[] { new ItemEstoque(pecaId, 4) };
+
+            var baixa = Task.Run(() => EnviarAsync(new BaixarEstoqueDoOrcamentoCommand(orcamentoId, itens)));
+            var estorno = Task.Run(() => EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(orcamentoId, itens)));
+            await Task.WhenAll(baixa, estorno);
+
+            Assert.True(baixa.Result.IsSuccess, $"rodada {rodada}: baixa");
+            Assert.True(estorno.Result.IsSuccess, $"rodada {rodada}: estorno");
+            Assert.Equal(10, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
+        }
+    }
+
+    [Fact(DisplayName = "Estorno de peça desativada depois da baixa devolve o saldo")]
+    public async Task Estorno_DePecaDesativada_DevolveSaldo()
+    {
+        using var client = await NovoClientAsync();
+        var pecaId = await CriarPecaAsync(client, estoque: 10);
+        var orcamentoId = Guid.NewGuid();
+        Assert.True((await EnviarAsync(new BaixarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 4)]))).IsSuccess);
+        (await client.DeleteAsync($"/api/v1/pecas-insumos/{pecaId}")).EnsureSuccessStatusCode();
+
+        var resultado = await EnviarAsync(new EstornarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 4)]));
+
+        Assert.True(resultado.IsSuccess);
+        Assert.Equal(DesfechoMovimentacaoDoOrcamento.Aplicada, resultado.Value);
+        var peca = await ObterPecaAsync(client, pecaId);
+        Assert.False(peca.Ativo);
+        Assert.Equal(10, peca.QuantidadeEmEstoque);
     }
 
     // ── Eventos de integração entregues em duplicidade ──
@@ -201,6 +283,7 @@ public class EstoqueConcorrenciaTests
         await harness.Start();
         var consumidor = harness.GetConsumerHarness<OrcamentoRejeitadoConsumer>();
         var orcamentoId = Guid.NewGuid();
+        Assert.True((await EnviarAsync(new BaixarEstoqueDoOrcamentoCommand(orcamentoId, [new ItemEstoque(pecaId, 2)]))).IsSuccess);
         var evento = new OrcamentoRejeitadoIntegrationEvent(
             Guid.NewGuid(), DateTime.UtcNow, Guid.NewGuid(), orcamentoId, [new ItemPecaEventDto(pecaId, 2)]);
 
@@ -209,7 +292,7 @@ public class EstoqueConcorrenciaTests
 
         Assert.True(await AguardarAsync(() => consumidor.Consumed
             .Select<OrcamentoRejeitadoIntegrationEvent>(e => e.Context.Message.OrcamentoId == orcamentoId).Count() == 2));
-        Assert.Equal(12, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
+        Assert.Equal(10, (await ObterPecaAsync(client, pecaId)).QuantidadeEmEstoque);
     }
 
     [Fact(DisplayName = "OrcamentoGerado de peça desativada: publica EstoqueBaixaFalhou")]

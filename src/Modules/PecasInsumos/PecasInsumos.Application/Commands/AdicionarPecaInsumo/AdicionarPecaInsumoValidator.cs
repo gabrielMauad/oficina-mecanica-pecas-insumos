@@ -1,4 +1,4 @@
-using FluentValidation;
+﻿using FluentValidation;
 using PecasInsumos.Domain;
 
 namespace PecasInsumos.Application.Commands.AdicionarPecaInsumo;

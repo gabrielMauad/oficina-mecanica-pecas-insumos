@@ -35,7 +35,7 @@ public sealed class DecrementarEstoqueQuandoOrcamentoGerado : IIntegrationEventH
             if (result.Value == DesfechoMovimentacaoDoOrcamento.JaProcessada)
             {
                 _logger.LogInformation(
-                    "Baixa de estoque do orçamento {OrcamentoId} da OS {OrdemServicoId} já havia sido realizada; evento repetido ignorado",
+                    "Baixa de estoque do orçamento {OrcamentoId} da OS {OrdemServicoId} já havia sido realizada ou o orçamento já foi estornado; evento ignorado",
                     integrationEvent.OrcamentoId,
                     integrationEvent.OrdemServicoId);
             }

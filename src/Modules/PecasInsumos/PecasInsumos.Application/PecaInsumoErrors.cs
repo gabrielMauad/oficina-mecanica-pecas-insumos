@@ -1,4 +1,4 @@
-using SharedKernel.Domain;
+﻿using SharedKernel.Domain;
 
 namespace PecasInsumos.Application;
 
@@ -20,3 +20,4 @@ internal class PecaInsumoErrors
         "PecaInsumo.EstoqueAlteradoPorOutraOperacao",
         "O estoque da peça/insumo foi alterado por outra operação e não comporta mais esta movimentação. Consulte o saldo atual e tente novamente.");
 }
+

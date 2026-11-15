@@ -10,7 +10,10 @@ public enum DesfechoMovimentacaoDoOrcamento
     Aplicada,
 
     /// <summary>O orçamento já tinha essa movimentação registrada; nada foi alterado.</summary>
-    JaProcessada
+    JaProcessada,
+
+    /// <summary>Estorno de orçamento sem baixa registrada: só o registro do estorno foi gravado, o estoque não foi tocado.</summary>
+    SemBaixaRegistrada
 }
 
 /// <summary>
@@ -56,6 +59,9 @@ internal static class AjusteDeEstoqueEmLote
 
         ResultadoMovimentacaoEmLote resultado =
             await gateway.MovimentarEstoqueDoOrcamento(orcamentoId, tipo, quantidadePorPeca, ct);
+
+        if (resultado.SemBaixaRegistrada)
+            return DesfechoMovimentacaoDoOrcamento.SemBaixaRegistrada;
 
         if (resultado.JaProcessada)
             return DesfechoMovimentacaoDoOrcamento.JaProcessada;

@@ -62,7 +62,12 @@ public sealed record FalhaMovimentacao(
 
 /// <summary>
 /// Resultado de uma movimentação em lote. <see cref="JaProcessada"/> indica que o orçamento já tinha essa
-/// movimentação registrada (reentrega do evento): nada foi alterado. Com <see cref="Falhas"/> não vazio,
+/// movimentação registrada (reentrega do evento) ou, numa baixa, que o orçamento já foi estornado: nada foi
+/// alterado. <see cref="SemBaixaRegistrada"/> indica um estorno de orçamento sem baixa registrada: só o registro
+/// do estorno foi gravado e o estoque não foi tocado. Com <see cref="Falhas"/> não vazio,
 /// nenhuma peça foi alterada.
 /// </summary>
-public sealed record ResultadoMovimentacaoEmLote(bool JaProcessada, IReadOnlyList<FalhaMovimentacao> Falhas);
+public sealed record ResultadoMovimentacaoEmLote(
+    bool JaProcessada,
+    IReadOnlyList<FalhaMovimentacao> Falhas,
+    bool SemBaixaRegistrada = false);

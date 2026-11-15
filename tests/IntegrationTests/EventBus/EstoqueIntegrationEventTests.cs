@@ -58,7 +58,7 @@ public class EstoqueIntegrationEventTests
         Assert.Equal(estoqueInicial - quantidadeUsada, peca.QuantidadeEmEstoque);
     }
 
-    [Fact(DisplayName = "OrcamentoRejeitado publicado no barramento → estoque é estornado no banco")]
+    [Fact(DisplayName = "OrcamentoRejeitado após a baixa do mesmo orçamento → estoque é estornado no banco")]
     public async Task OrcamentoRejeitado_DeveEstornarEstoque()
     {
         // Arrange
@@ -69,16 +69,22 @@ public class EstoqueIntegrationEventTests
         var harness = _factory.Harness;
         await harness.Start();
 
+        var orcamentoId = Guid.NewGuid();
+        await harness.Bus.Publish(new OrcamentoGeradoIntegrationEvent(
+            Guid.NewGuid(), DateTime.UtcNow, Guid.NewGuid(), orcamentoId,
+            [new ItemPecaEventDto(pecaId, quantidadeEstornada)]));
+        await AguardarEstoqueAsync(client, pecaId, estoqueInicial - quantidadeEstornada);
+
         var evento = new OrcamentoRejeitadoIntegrationEvent(
-            Guid.NewGuid(), DateTime.UtcNow, Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), DateTime.UtcNow, Guid.NewGuid(), orcamentoId,
             [new ItemPecaEventDto(pecaId, quantidadeEstornada)]);
 
         // Act
         await harness.Bus.Publish(evento);
 
         // Assert
-        var peca = await AguardarEstoqueAsync(client, pecaId, estoqueInicial + quantidadeEstornada);
-        Assert.Equal(estoqueInicial + quantidadeEstornada, peca.QuantidadeEmEstoque);
+        var peca = await AguardarEstoqueAsync(client, pecaId, estoqueInicial);
+        Assert.Equal(estoqueInicial, peca.QuantidadeEmEstoque);
     }
 
     [Fact(DisplayName = "OrcamentoGerado seguido de OrcamentoRejeitado → estoque volta ao valor inicial")]

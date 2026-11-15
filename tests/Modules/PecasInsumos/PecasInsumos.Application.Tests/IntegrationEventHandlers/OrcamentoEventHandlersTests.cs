@@ -148,4 +148,20 @@ public class OrcamentoEventHandlersTests
         Assert.Null(ex);
         _bus.VerifyNoOtherCalls();
     }
+
+    [Fact(DisplayName = "Estorno sem baixa registrada: não lança nem publica")]
+    public async Task Estorno_QuandoSemBaixaRegistrada_NaoLancaNemPublica()
+    {
+        _sender
+            .Setup(s => s.Send(It.IsAny<EstornarEstoqueDoOrcamentoCommand>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Result.Success(DesfechoMovimentacaoDoOrcamento.SemBaixaRegistrada));
+        var handler = new IncrementarEstoqueQuandoOrcamentoRejeitado(
+            _sender.Object, NullLogger<IncrementarEstoqueQuandoOrcamentoRejeitado>.Instance);
+
+        var ex = await Record.ExceptionAsync(() =>
+            handler.Handle(NovoRejeitado(new ItemPecaEventDto(Guid.NewGuid(), 1)), CancellationToken.None));
+
+        Assert.Null(ex);
+        _bus.VerifyNoOtherCalls();
+    }
 }

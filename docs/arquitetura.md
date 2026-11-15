@@ -49,10 +49,13 @@ Todo command passa por `LoggingBehavior` → `ValidationBehavior` → `Transacti
 
 ## Fluxo 2 — estorno (`OrcamentoRejeitado`)
 
-Mesmo mecanismo em lote, com `UPDATE` condicional de soma (respeitando o limite de `int.MaxValue`) e registro
-(`orcamento_id`, `Estorno`). Todas as peças são devolvidas numa transação ou nenhuma, e um `OrcamentoRejeitado`
-repetido ou simultâneo devolve o estoque uma única vez. Peça
-inexistente ou desativada impede o estorno inteiro, que fica registrado em log de erro.
+Mesmo mecanismo em lote, com `UPDATE` condicional de soma (respeitando o limite de `int.MaxValue`), sem exigir
+peça ativa, e registro (`orcamento_id`, `Estorno`). Todas as peças são devolvidas numa transação ou nenhuma, e
+um `OrcamentoRejeitado` repetido ou simultâneo devolve o estoque uma única vez. O estorno só devolve estoque de
+um orçamento com baixa registrada: sem ela, grava apenas a linha `Estorno` (que faz uma baixa posterior ser
+ignorada) e não mexe no estoque. Toda movimentação do mesmo orçamento é serializada por um lock consultivo
+transacional do PostgreSQL (`pg_advisory_xact_lock`). Peça inexistente ou com saldo que passaria do limite
+impede o estorno inteiro, que fica registrado em log de erro.
 
 ## Fluxo 3 — consulta de disponibilidade (HTTP)
 
@@ -69,11 +72,11 @@ gerado e o evento é consumido (fluxo 1).
 | Falha de negócio vira **evento** (`EstoqueBaixaFalhou`), falha de infraestrutura vira **exceção** | o evento alimenta a compensação da Saga (OS rejeita o orçamento; pagamento cancela o pendente); a exceção aciona o retry do consumer |
 | Banco **PostgreSQL** próprio | dados relacionais simples e transacionais (saldo de estoque exige gravação atômica de várias linhas) |
 | Saldo alterado por **`UPDATE` condicional**, não por ler-alterar-gravar | duas movimentações concorrentes que leem o mesmo saldo perdem uma atualização (e vendem estoque que não existe); o `UPDATE` trava a linha e reavalia o saldo corrente, sem retry nem token de concorrência |
-| Baixa e estorno **idempotentes por orçamento** (tabela `movimentacao_orcamento`) | a mensageria entrega ao menos uma vez e a OS pode publicar o mesmo evento duas vezes; sem o registro, o estoque seria baixado ou devolvido duas vezes |
+| Baixa e estorno **idempotentes por orçamento** (tabela `movimentacao_orcamento`), estorno só de orçamento com baixa registrada | a mensageria entrega ao menos uma vez e a OS pode publicar o mesmo evento duas vezes; sem o registro, o estoque seria baixado ou devolvido duas vezes. O estorno que chega sem baixa (a baixa falhou) não pode inflar o estoque, e a linha de estorno impede que uma baixa tardia consuma o estoque de um orçamento já rejeitado |
 | Consumers MassTransit finos | mantêm a Application independente do transporte; trocar o broker não altera Domain nem Application |
 | Sem chamadas HTTP de saída | o evento já carrega peças e quantidades, então o consumo de fila não depende de outro serviço estar no ar |
 
 ## Limitações e evolução futura
 
-Descritas no [README](../README.md#limitações-conhecidas): sem outbox, sem inbox (reentrega), sem token de
-concorrência na peça e estorno sem compensação.
+Descritas no [README](../README.md#limitações-conhecidas): sem outbox, idempotência apenas de baixa e estorno,
+estorno sem compensação e orçamentos anteriores ao registro de movimentações sem estorno automático.

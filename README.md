@@ -177,7 +177,7 @@ sequenceDiagram
     Q->>C: entrega
     C->>H: delega ao handler da Application
     H->>DB: BEGIN; registra (orçamento, Baixa) na tabela de movimentações
-    alt orçamento já registrado (reentrega)
+    alt orçamento já registrado (reentrega) ou já estornado
         H->>DB: ROLLBACK (nada é baixado; sem EstoqueBaixaFalhou)
     else primeira entrega
         H->>DB: UPDATE condicional por peça (ativa e saldo suficiente)
@@ -202,7 +202,7 @@ sequenceDiagram
   entre orçamentos que compartilham peças. A entrada/saída manual e o estorno usam o mesmo tipo de
   `UPDATE` atômico (a entrada também respeita o limite de `int.MaxValue`).
 - **Idempotente por orçamento.** A tabela `movimentacao_orcamento` tem chave primária
-  (`orcamento_id`, `tipo`), com `tipo` = `Baixa` ou `Estorno`. A linha é inserida na mesma transação da
+  (`orcamento_id`, `tipo`), com `tipo` = `Baixa` ou `Estorno`. A linha `Baixa` é inserida na mesma transação da
   baixa; entregas repetidas ou simultâneas do mesmo `OrcamentoGerado` não inserem de novo e não baixam o
   estoque outra vez. Uma baixa que falhou é desfeita junto com o registro.
 - **Falha de negócio → `EstoqueBaixaFalhou`.** O evento é publicado diretamente no barramento (nada foi
@@ -218,12 +218,27 @@ sequenceDiagram
 
 Publicado pela OS quando o cliente rejeita o orçamento **ou** quando o pagamento é recusado. O handler
 `IncrementarEstoqueQuandoOrcamentoRejeitado` aplica o mesmo mecanismo em lote, com entrada em vez de
-saída: todas as peças são devolvidas ou nenhuma. É **idempotente por orçamento** (registro
-(`orcamento_id`, `Estorno`)): um `OrcamentoRejeitado` repetido ou simultâneo devolve o estoque uma única
-vez. O estorno não exige uma baixa registrada para o orçamento, de modo que orçamentos baixados antes da
-existência do registro continuam estornáveis. Se alguma peça do orçamento não existir ou estiver
-desativada, nada é estornado e a falha é registrada em log de erro (não há evento de compensação do
-estorno).
+saída: todas as peças são devolvidas ou nenhuma. Regras:
+
+- **Idempotente por orçamento** (registro (`orcamento_id`, `Estorno`)): um `OrcamentoRejeitado` repetido ou
+  simultâneo devolve o estoque uma única vez.
+- **Só estorna o que foi baixado.** O estorno exige a linha `Baixa` do mesmo orçamento. Sem ela (por exemplo,
+  a baixa falhou e o `OrcamentoRejeitado` foi processado por corrida), o serviço grava apenas a linha
+  `Estorno`, **não altera o estoque** e registra um aviso em log. Essa linha funciona como marca: uma
+  baixa que chegue depois para o mesmo orçamento é ignorada (sem baixar e sem `EstoqueBaixaFalhou`, pois o
+  orçamento já foi rejeitado).
+- **Serialização por orçamento.** Baixa e estorno gravam linhas diferentes da chave primária, que sozinha
+  não os ordena. Por isso toda movimentação começa com um lock consultivo transacional do PostgreSQL
+  (`pg_advisory_xact_lock` sobre o `orcamento_id`), liberado no commit/rollback: a baixa e o estorno do
+  mesmo orçamento nunca decidem ao mesmo tempo, e cada um enxerga o registro já confirmado do outro.
+  Qualquer que seja a ordem de chegada, o estoque termina como se o orçamento nunca tivesse sido movimentado
+  (baixa seguida de estorno, ou estorno que impede a baixa).
+- **Peça desativada recebe o estoque de volta.** O estorno não exige que a peça esteja ativa; a baixa e a
+  entrada manual continuam exigindo.
+- Se alguma peça do orçamento não existir ou o saldo passasse de `int.MaxValue`, nada é estornado e a falha
+  é registrada em log de erro (não há evento de compensação do estorno).
+- Orçamentos baixados antes da existência da tabela `movimentacao_orcamento` não têm linha `Baixa` e, por
+  isso, deixam de ser estornados automaticamente.
 
 ### Limitações conhecidas
 
@@ -234,6 +249,7 @@ estorno).
   `EventId` de mensagem genérica. Uma baixa que falhou não fica registrada, então uma reentrega dela
   reavalia o saldo e, no máximo, publica `EstoqueBaixaFalhou` de novo.
 - **Estorno sem compensação.** Uma falha de negócio no estorno só é registrada em log.
+- **Orçamentos anteriores ao registro de movimentações.** Orçamentos baixados antes da tabela `movimentacao_orcamento` não têm linha `Baixa`; se forem rejeitados depois, o estorno não devolve estoque (só registra o aviso).
 
 ## Configuração
 

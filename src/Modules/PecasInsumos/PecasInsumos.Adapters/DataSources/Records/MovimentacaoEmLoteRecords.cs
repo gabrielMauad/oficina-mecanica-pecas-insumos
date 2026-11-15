@@ -12,4 +12,5 @@ public sealed record FalhaMovimentacaoRecord(
 
 public sealed record ResultadoMovimentacaoRecord(
     bool JaProcessada,
-    IReadOnlyList<FalhaMovimentacaoRecord> Falhas);
+    IReadOnlyList<FalhaMovimentacaoRecord> Falhas,
+    bool SemBaixaRegistrada = false);

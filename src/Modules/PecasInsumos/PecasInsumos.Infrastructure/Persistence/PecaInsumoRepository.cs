@@ -31,10 +31,13 @@ internal sealed class PecaInsumoRepository : IPecaInsumoRepository
     }
 
     public async Task<bool> IncrementarEstoque(Guid id, int quantidade, CancellationToken ct = default) =>
-        await AplicarIncremento(id, quantidade, ct) > 0;
+        await AplicarIncremento(id, quantidade, exigirAtiva: true, ct) > 0;
 
     public async Task<bool> DecrementarEstoque(Guid id, int quantidade, CancellationToken ct = default) =>
         await AplicarDecremento(id, quantidade, ct) > 0;
+
+    private const string TipoBaixa = "Baixa";
+    private const string TipoEstorno = "Estorno";
 
     public async Task<ResultadoMovimentacaoRecord> MovimentarEmLote(
         Guid orcamentoId,
@@ -45,18 +48,36 @@ internal sealed class PecaInsumoRepository : IPecaInsumoRepository
     {
         await using var transacao = await _context.Database.BeginTransactionAsync(ct);
 
-        // Registra primeiro: a chave única serializa entregas concorrentes do mesmo orçamento (a segunda
-        // espera a primeira confirmar e então não insere nada) e a reentrega posterior também não insere.
-        int registradas = await _context.Database.ExecuteSqlInterpolatedAsync(
-            $@"INSERT INTO pecas_insumos.movimentacao_orcamento (orcamento_id, tipo, registrada_em)
-               VALUES ({orcamentoId}, {tipo}, {DateTime.UtcNow})
-               ON CONFLICT (orcamento_id, tipo) DO NOTHING",
-            ct);
+        // Serializa toda movimentação do mesmo orçamento (baixa x estorno x repetições). Baixa e estorno
+        // gravam linhas diferentes da chave (orcamento_id, tipo), então a chave única sozinha não os
+        // serializa entre si; o lock consultivo, liberado no fim da transação, garante que cada um
+        // enxergue o registro confirmado do outro.
+        await _context.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock(hashtextextended({orcamentoId.ToString()}, 0))", ct);
 
-        if (registradas == 0)
+        if (await Registrado(orcamentoId, tipo, ct))
         {
             await transacao.RollbackAsync(ct);
             return new ResultadoMovimentacaoRecord(true, []);
+        }
+
+        if (!incremento)
+        {
+            // Baixa de um orçamento que já foi estornado (o estorno chegou antes, ex.: a baixa falhou e a
+            // rejeição foi processada primeiro): não baixa.
+            if (await Registrado(orcamentoId, TipoEstorno, ct))
+            {
+                await transacao.RollbackAsync(ct);
+                return new ResultadoMovimentacaoRecord(true, []);
+            }
+        }
+        else if (!await Registrado(orcamentoId, TipoBaixa, ct))
+        {
+            // Estorno sem baixa registrada: não há o que devolver. Registra só o estorno, para que uma baixa
+            // que chegue depois seja ignorada, e não mexe no estoque.
+            await Registrar(orcamentoId, tipo, ct);
+            await transacao.CommitAsync(ct);
+            return new ResultadoMovimentacaoRecord(false, [], SemBaixaRegistrada: true);
         }
 
         var falhas = new List<FalhaMovimentacaoRecord>();
@@ -65,8 +86,9 @@ internal sealed class PecaInsumoRepository : IPecaInsumoRepository
         // o que evita deadlock entre orçamentos que compartilham peças.
         foreach (var item in itens.OrderBy(i => i.PecaInsumoId))
         {
+            // O estorno devolve o estoque mesmo que a peça tenha sido desativada depois da baixa.
             int afetadas = incremento
-                ? await AplicarIncremento(item.PecaInsumoId, item.Quantidade, ct)
+                ? await AplicarIncremento(item.PecaInsumoId, item.Quantidade, exigirAtiva: false, ct)
                 : await AplicarDecremento(item.PecaInsumoId, item.Quantidade, ct);
 
             if (afetadas == 0)
@@ -75,22 +97,35 @@ internal sealed class PecaInsumoRepository : IPecaInsumoRepository
 
         if (falhas.Count > 0)
         {
-            // Desfaz também o registro e as peças já movimentadas neste lote.
+            // Desfaz as peças já movimentadas neste lote; nada fica registrado.
             await transacao.RollbackAsync(ct);
             return new ResultadoMovimentacaoRecord(false, falhas);
         }
 
+        await Registrar(orcamentoId, tipo, ct);
         await transacao.CommitAsync(ct);
         return new ResultadoMovimentacaoRecord(false, []);
     }
 
-    private Task<int> AplicarIncremento(Guid id, int quantidade, CancellationToken ct)
+    private Task<bool> Registrado(Guid orcamentoId, string tipo, CancellationToken ct) =>
+        _context.MovimentacoesOrcamento
+            .AsNoTracking()
+            .AnyAsync(m => m.OrcamentoId == orcamentoId && m.Tipo == tipo, ct);
+
+    private Task<int> Registrar(Guid orcamentoId, string tipo, CancellationToken ct) =>
+        _context.Database.ExecuteSqlInterpolatedAsync(
+            $@"INSERT INTO pecas_insumos.movimentacao_orcamento (orcamento_id, tipo, registrada_em)
+               VALUES ({orcamentoId}, {tipo}, {DateTime.UtcNow})
+               ON CONFLICT (orcamento_id, tipo) DO NOTHING",
+            ct);
+
+    private Task<int> AplicarIncremento(Guid id, int quantidade, bool exigirAtiva, CancellationToken ct)
     {
         int limite = int.MaxValue - quantidade;
         DateTime agora = DateTime.UtcNow;
 
         return _context.PecasInsumos
-            .Where(p => p.Id == id && p.Ativo && p.QuantidadeEmEstoque <= limite)
+            .Where(p => p.Id == id && (p.Ativo || !exigirAtiva) && p.QuantidadeEmEstoque <= limite)
             .ExecuteUpdateAsync(s => s
                 .SetProperty(p => p.QuantidadeEmEstoque, p => p.QuantidadeEmEstoque + quantidade)
                 .SetProperty(p => p.AtualizadoEm, agora), ct);

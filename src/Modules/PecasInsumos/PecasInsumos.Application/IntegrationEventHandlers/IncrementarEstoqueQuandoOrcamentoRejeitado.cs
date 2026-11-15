@@ -44,5 +44,12 @@ public sealed class IncrementarEstoqueQuandoOrcamentoRejeitado : IIntegrationEve
                 integrationEvent.OrcamentoId,
                 integrationEvent.OrdemServicoId);
         }
+        else if (result.Value == DesfechoMovimentacaoDoOrcamento.SemBaixaRegistrada)
+        {
+            _logger.LogWarning(
+                "Orçamento {OrcamentoId} da OS {OrdemServicoId} rejeitado sem baixa de estoque registrada; nenhum estoque foi devolvido e o estorno ficou registrado para ignorar uma baixa que chegue depois",
+                integrationEvent.OrcamentoId,
+                integrationEvent.OrdemServicoId);
+        }
     }
 }

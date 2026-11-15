@@ -1,4 +1,4 @@
-using FluentValidation;
+﻿using FluentValidation;
 
 namespace PecasInsumos.Application.Commands.AtualizarPecaInsumo;
 
