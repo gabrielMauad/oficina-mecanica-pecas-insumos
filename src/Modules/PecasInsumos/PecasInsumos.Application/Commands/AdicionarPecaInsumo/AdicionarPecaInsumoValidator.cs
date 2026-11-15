@@ -1,4 +1,4 @@
-﻿using FluentValidation;
+using FluentValidation;
 using PecasInsumos.Domain;
 
 namespace PecasInsumos.Application.Commands.AdicionarPecaInsumo;
@@ -13,8 +13,7 @@ public sealed class AdicionarPecaInsumoValidator : AbstractValidator<AdicionarPe
             .MaximumLength(200)
             .WithMessage("O nome da peça/insumo deve ter no máximo 200 caracteres.");
         RuleFor(x => x.Preco)
-            .GreaterThanOrEqualTo(0)
-            .WithMessage("O preço da peça/insumo não deve ser negativo.");
+            .PrecoUnitarioValido();
         RuleFor(x => x.QuantidadeEmEstoque)
             .GreaterThanOrEqualTo(0)
             .WithMessage("A quantidade em estoque da peça/insumo não pode ser negativa.");

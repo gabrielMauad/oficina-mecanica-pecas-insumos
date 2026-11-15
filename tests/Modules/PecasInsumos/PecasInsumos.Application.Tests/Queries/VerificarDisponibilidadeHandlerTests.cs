@@ -73,4 +73,18 @@ public class VerificarDisponibilidadeHandlerTests
 
         Assert.True(result.IsValid);
     }
+
+    [Fact(DisplayName = "Peça desativada com estoque: indisponível")]
+    public async Task Handle_DeveRetornarIndisponivel_QuandoPecaDesativada()
+    {
+        var id = Guid.NewGuid();
+        PecaInsumoEntity peca = PecaInsumoEntity.Criar("Filtro de Óleo", null, 49.90m, 10, UnidadeDeMedida.Unidade).Value;
+        peca.Desativar();
+        _gatewayMock.Setup(g => g.ObterPorId(new PecaInsumoId(id), It.IsAny<CancellationToken>())).ReturnsAsync(peca);
+
+        var result = await _handler.Handle(new VerificarDisponibilidadeQuery(id, 1), CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(result.Value.Disponivel);
+    }
 }

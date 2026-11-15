@@ -6,6 +6,9 @@ public sealed class EstornarEstoqueDoOrcamentoValidator : AbstractValidator<Esto
 {
     public EstornarEstoqueDoOrcamentoValidator()
     {
+        RuleFor(x => x.OrcamentoId)
+            .NotEmpty()
+            .WithMessage("Id do orçamento é obrigatório.");
         RuleFor(x => x.Itens)
             .NotNull()
             .WithMessage("Itens do orçamento são obrigatórios.");

@@ -26,7 +26,7 @@ public sealed class IncrementarEstoqueQuandoOrcamentoRejeitado : IIntegrationEve
             .Select(p => new ItemEstoque(p.PecaInsumoId, p.Quantidade))
             .ToList();
 
-        var result = await _sender.Send(new EstornarEstoqueDoOrcamentoCommand(itens), ct);
+        var result = await _sender.Send(new EstornarEstoqueDoOrcamentoCommand(integrationEvent.OrcamentoId, itens), ct);
         if (result.IsFailure)
         {
             _logger.LogError(
@@ -34,6 +34,15 @@ public sealed class IncrementarEstoqueQuandoOrcamentoRejeitado : IIntegrationEve
                 integrationEvent.OrcamentoId,
                 integrationEvent.OrdemServicoId,
                 result.Error.Message);
+            return;
+        }
+
+        if (result.Value == DesfechoMovimentacaoDoOrcamento.JaProcessada)
+        {
+            _logger.LogInformation(
+                "Estorno de estoque do orçamento {OrcamentoId} da OS {OrdemServicoId} já havia sido realizado; evento repetido ignorado",
+                integrationEvent.OrcamentoId,
+                integrationEvent.OrdemServicoId);
         }
     }
 }

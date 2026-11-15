@@ -209,4 +209,33 @@ public class PecaInsumoTests
         // Assert
         Assert.False(pecaInsumo.Ativo);
     }
+
+    [Theory]
+    [InlineData(int.MaxValue, 1)]
+    [InlineData(int.MaxValue - 4, 5)]
+    [InlineData(1, int.MaxValue)]
+    public void Incrementar_QueUltrapassaIntMaxValue_RetornaErroSemAlterarEstoque(int estoque, int quantidade)
+    {
+        // Arrange
+        var pecaInsumo = PecaInsumoEntity.Criar("Parafuso", null, 1.0m, estoque, UnidadeDeMedida.Unidade).Value;
+
+        // Act
+        var pecaInsumoResult = pecaInsumo.Incrementar(quantidade);
+
+        // Assert
+        Assert.True(pecaInsumoResult.IsFailure);
+        Assert.Equal("PecaInsumo.EstoqueExcedeLimite", pecaInsumoResult.Error.Code);
+        Assert.Equal(estoque, pecaInsumo.QuantidadeEmEstoque);
+    }
+
+    [Fact]
+    public void Incrementar_AteIntMaxValue_E_Permitido()
+    {
+        var pecaInsumo = PecaInsumoEntity.Criar("Parafuso", null, 1.0m, int.MaxValue - 5, UnidadeDeMedida.Unidade).Value;
+
+        var pecaInsumoResult = pecaInsumo.Incrementar(5);
+
+        Assert.True(pecaInsumoResult.IsSuccess);
+        Assert.Equal(int.MaxValue, pecaInsumo.QuantidadeEmEstoque);
+    }
 }

@@ -21,14 +21,16 @@ public sealed class DecrementarEstoqueHandler : IRequestHandler<DecrementarEstoq
         if (!pecaInsumo.Ativo)
             return PecaInsumoErrors.JaDesativado;
 
+        // Valida a regra de domínio (quantidade positiva, saldo suficiente) sobre o saldo lido...
         Result<PecaInsumo> pecaInsumoResult = pecaInsumo.Decrementar(command.Quantidade);
         if (pecaInsumoResult.IsFailure)
             return pecaInsumoResult.Error;
 
-        pecaInsumo = pecaInsumoResult.Value;
+        // ...mas quem altera o saldo é a operação atômica no banco, que reaplica a mesma condição sobre o
+        // saldo corrente. Se outra movimentação consumiu o saldo no intervalo, nada é gravado.
+        if (!await _gateway.DecrementarEstoque(pecaInsumoId, command.Quantidade, cancellationToken))
+            return PecaInsumoErrors.EstoqueAlteradoPorOutraOperacao;
 
-        await _gateway.Atualizar(pecaInsumo, cancellationToken);
-
-        return pecaInsumo;
+        return await _gateway.ObterPorId(pecaInsumoId, cancellationToken) ?? pecaInsumoResult.Value;
     }
 }
