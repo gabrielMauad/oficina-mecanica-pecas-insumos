@@ -1,70 +1,95 @@
 using PecasInsumos.Application.Gateways;
-using PecasInsumos.Domain;
 using SharedKernel.Domain;
 
 namespace PecasInsumos.Application.Commands;
 
+/// <summary>Desfecho de uma baixa/estorno de orçamento bem-sucedido.</summary>
+public enum DesfechoMovimentacaoDoOrcamento
+{
+    /// <summary>A movimentação foi aplicada a todas as peças.</summary>
+    Aplicada,
+
+    /// <summary>O orçamento já tinha essa movimentação registrada; nada foi alterado.</summary>
+    JaProcessada,
+
+    /// <summary>Estorno de orçamento sem baixa registrada: só o registro do estorno foi gravado, o estoque não foi tocado.</summary>
+    SemBaixaRegistrada
+}
+
 /// <summary>
-/// Aplica uma movimentação de estoque a várias peças como uma operação "tudo ou nada": carrega todas,
-/// aplica a operação de domínio a todas em memória e só então entrega as peças alteradas ao gateway.
-/// Se qualquer peça não existir, estiver desativada ou rejeitar a operação, nenhuma é entregue ao
-/// gateway e o resultado é uma falha com o motivo de cada peça problemática. A persistência fica a cargo
-/// do <c>TransactionBehavior</c>, que salva uma única vez e apenas quando o resultado é sucesso.
+/// Aplica uma movimentação de estoque a todas as peças de um orçamento como uma operação "tudo ou nada"
+/// e idempotente por orçamento. A atomicidade e a checagem de saldo ficam no gateway (UPDATE condicional
+/// numa única transação), porque ler o saldo, alterar em memória e gravar permite que duas movimentações
+/// concorrentes leiam o mesmo saldo e uma sobrescreva a outra. Aqui só se agrupam os itens e se traduz o
+/// resultado em erro com o motivo de cada peça problemática.
 /// </summary>
 internal static class AjusteDeEstoqueEmLote
 {
-    public static async Task<Result<IReadOnlyList<PecaInsumo>>> Aplicar(
+    public static async Task<Result<DesfechoMovimentacaoDoOrcamento>> Aplicar(
         IPecaInsumoGateway gateway,
+        Guid orcamentoId,
+        TipoMovimentacaoOrcamento tipo,
         IEnumerable<ItemEstoque> itens,
-        Func<PecaInsumo, int, Result<PecaInsumo>> operacao,
         Error erroBase,
         CancellationToken ct)
     {
-        // A mesma peça pode aparecer mais de uma vez no orçamento: soma as quantidades para que cada
-        // peça seja carregada, validada e atualizada uma única vez.
-        var quantidadePorPeca = itens
+        // A mesma peça pode aparecer mais de uma vez no orçamento: soma as quantidades (em long, para
+        // não estourar) para que cada peça seja movimentada uma única vez.
+        var somas = itens
             .GroupBy(i => i.PecaInsumoId)
-            .Select(g => new ItemEstoque(g.Key, g.Sum(i => i.Quantidade)))
+            .Select(g => (PecaInsumoId: g.Key, Quantidade: g.Sum(i => (long)i.Quantidade)))
             .ToList();
 
-        var alteradas = new List<PecaInsumo>(quantidadePorPeca.Count);
-        var problemas = new List<string>();
-
-        foreach (var item in quantidadePorPeca)
+        var excedentes = somas.Where(s => s.Quantidade > int.MaxValue).ToList();
+        if (excedentes.Count > 0)
         {
-            PecaInsumo? peca = await gateway.ObterPorId(new PecaInsumoId(item.PecaInsumoId), ct);
-
-            if (peca is null)
+            return erroBase with
             {
-                problemas.Add($"Peça/insumo {item.PecaInsumoId} não encontrada.");
-                continue;
-            }
-
-            if (!peca.Ativo)
-            {
-                problemas.Add($"Peça/insumo '{peca.Nome}' ({item.PecaInsumoId}) está desativada.");
-                continue;
-            }
-
-            int estoqueAntes = peca.QuantidadeEmEstoque;
-            Result<PecaInsumo> resultado = operacao(peca, item.Quantidade);
-            if (resultado.IsFailure)
-            {
-                problemas.Add(
-                    $"Peça/insumo '{peca.Nome}' ({item.PecaInsumoId}): {resultado.Error.Message} " +
-                    $"(quantidade: {item.Quantidade}, em estoque: {estoqueAntes}).");
-                continue;
-            }
-
-            alteradas.Add(resultado.Value);
+                Message = string.Join(" ", excedentes.Select(e =>
+                    $"Peça/insumo {e.PecaInsumoId}: quantidade total do orçamento ultrapassa {int.MaxValue}."))
+            };
         }
 
-        if (problemas.Count > 0)
-            return erroBase with { Message = string.Join(" ", problemas) };
+        var quantidadePorPeca = somas
+            .Select(s => new ItemEstoque(s.PecaInsumoId, (int)s.Quantidade))
+            .ToList();
 
-        foreach (var peca in alteradas)
-            await gateway.Atualizar(peca, ct);
+        if (quantidadePorPeca.Count == 0)
+            return DesfechoMovimentacaoDoOrcamento.Aplicada;
 
-        return alteradas;
+        ResultadoMovimentacaoEmLote resultado =
+            await gateway.MovimentarEstoqueDoOrcamento(orcamentoId, tipo, quantidadePorPeca, ct);
+
+        if (resultado.SemBaixaRegistrada)
+            return DesfechoMovimentacaoDoOrcamento.SemBaixaRegistrada;
+
+        if (resultado.JaProcessada)
+            return DesfechoMovimentacaoDoOrcamento.JaProcessada;
+
+        if (resultado.Falhas.Count > 0)
+        {
+            var quantidades = quantidadePorPeca.ToDictionary(i => i.PecaInsumoId, i => i.Quantidade);
+            return erroBase with
+            {
+                Message = string.Join(" ", resultado.Falhas.Select(f => Descrever(f, quantidades[f.PecaInsumoId])))
+            };
+        }
+
+        return DesfechoMovimentacaoDoOrcamento.Aplicada;
+    }
+
+    private static string Descrever(FalhaMovimentacao falha, int quantidade)
+    {
+        string peca = $"Peça/insumo '{falha.Nome}' ({falha.PecaInsumoId})";
+        string saldo = $"(quantidade: {quantidade}, em estoque: {falha.QuantidadeEmEstoque})";
+
+        return falha.Motivo switch
+        {
+            MotivoFalhaMovimentacao.NaoEncontrada => $"Peça/insumo {falha.PecaInsumoId} não encontrada.",
+            MotivoFalhaMovimentacao.Desativada => $"{peca} está desativada.",
+            MotivoFalhaMovimentacao.EstoqueInsuficiente =>
+                $"{peca}: Quantidade em estoque não pode ficar negativa. {saldo}.",
+            _ => $"{peca}: Quantidade em estoque não pode ultrapassar {int.MaxValue}. {saldo}."
+        };
     }
 }

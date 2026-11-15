@@ -21,7 +21,7 @@ public sealed class VerificarDisponibilidadeHandler
             return PecaInsumoErrors.NaoEncontrada;
 
         return new DisponibilidadePecaInsumo(
-            pecaInsumo.QuantidadeEmEstoque >= request.Quantidade,
+            pecaInsumo.Ativo && pecaInsumo.QuantidadeEmEstoque >= request.Quantidade,
             pecaInsumo.PrecoUnitario.Valor);
     }
 }

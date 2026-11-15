@@ -11,8 +11,8 @@ public class BaixaEEstornoDoOrcamentoValidatorTests
     {
         var validator = new BaixarEstoqueDoOrcamentoValidator();
 
-        Assert.True(validator.Validate(new BaixarEstoqueDoOrcamentoCommand([new ItemEstoque(Guid.NewGuid(), 1)])).IsValid);
-        Assert.True(validator.Validate(new BaixarEstoqueDoOrcamentoCommand([])).IsValid);
+        Assert.True(validator.Validate(new BaixarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.NewGuid(), 1)])).IsValid);
+        Assert.True(validator.Validate(new BaixarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [])).IsValid);
     }
 
     [Fact(DisplayName = "Baixa: id vazio e quantidade não positiva são rejeitados")]
@@ -20,8 +20,16 @@ public class BaixaEEstornoDoOrcamentoValidatorTests
     {
         var validator = new BaixarEstoqueDoOrcamentoValidator();
 
-        Assert.False(validator.Validate(new BaixarEstoqueDoOrcamentoCommand([new ItemEstoque(Guid.Empty, 1)])).IsValid);
-        Assert.False(validator.Validate(new BaixarEstoqueDoOrcamentoCommand([new ItemEstoque(Guid.NewGuid(), 0)])).IsValid);
+        Assert.False(validator.Validate(new BaixarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.Empty, 1)])).IsValid);
+        Assert.False(validator.Validate(new BaixarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.NewGuid(), 0)])).IsValid);
+    }
+
+    [Fact(DisplayName = "Baixa: id de orçamento vazio é rejeitado")]
+    public void Baixa_OrcamentoVazio_Falha()
+    {
+        var validator = new BaixarEstoqueDoOrcamentoValidator();
+
+        Assert.False(validator.Validate(new BaixarEstoqueDoOrcamentoCommand(Guid.Empty, [new ItemEstoque(Guid.NewGuid(), 1)])).IsValid);
     }
 
     [Fact(DisplayName = "Estorno: itens válidos e lista vazia passam")]
@@ -29,8 +37,8 @@ public class BaixaEEstornoDoOrcamentoValidatorTests
     {
         var validator = new EstornarEstoqueDoOrcamentoValidator();
 
-        Assert.True(validator.Validate(new EstornarEstoqueDoOrcamentoCommand([new ItemEstoque(Guid.NewGuid(), 1)])).IsValid);
-        Assert.True(validator.Validate(new EstornarEstoqueDoOrcamentoCommand([])).IsValid);
+        Assert.True(validator.Validate(new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.NewGuid(), 1)])).IsValid);
+        Assert.True(validator.Validate(new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [])).IsValid);
     }
 
     [Fact(DisplayName = "Estorno: id vazio e quantidade não positiva são rejeitados")]
@@ -38,7 +46,15 @@ public class BaixaEEstornoDoOrcamentoValidatorTests
     {
         var validator = new EstornarEstoqueDoOrcamentoValidator();
 
-        Assert.False(validator.Validate(new EstornarEstoqueDoOrcamentoCommand([new ItemEstoque(Guid.Empty, 1)])).IsValid);
-        Assert.False(validator.Validate(new EstornarEstoqueDoOrcamentoCommand([new ItemEstoque(Guid.NewGuid(), -1)])).IsValid);
+        Assert.False(validator.Validate(new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.Empty, 1)])).IsValid);
+        Assert.False(validator.Validate(new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.NewGuid(), -1)])).IsValid);
+    }
+
+    [Fact(DisplayName = "Estorno: id de orçamento vazio é rejeitado")]
+    public void Estorno_OrcamentoVazio_Falha()
+    {
+        var validator = new EstornarEstoqueDoOrcamentoValidator();
+
+        Assert.False(validator.Validate(new EstornarEstoqueDoOrcamentoCommand(Guid.Empty, [new ItemEstoque(Guid.NewGuid(), 1)])).IsValid);
     }
 }

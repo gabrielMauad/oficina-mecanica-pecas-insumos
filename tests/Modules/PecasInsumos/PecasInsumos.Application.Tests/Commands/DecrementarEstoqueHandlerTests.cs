@@ -29,6 +29,7 @@ public class DecrementarEstoqueHandlerTests
         var pecaInsumoId = new PecaInsumoId(command.PecaInsumoId);
         PecaInsumoEntity pecaInsumo = PecaInsumoEntity.Criar("Filtro de Óleo", "Descrição", 10, 10, UnidadeDeMedida.Unidade).Value;
         var quantidadeEsperada = pecaInsumo.QuantidadeEmEstoque - command.Quantidade;
+        _gatewayMock.Setup(x => x.DecrementarEstoque(pecaInsumoId, command.Quantidade, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         _gatewayMock.Setup(x => x.ObterPorId(pecaInsumoId, It.IsAny<CancellationToken>())).ReturnsAsync(pecaInsumo);
 
@@ -46,7 +47,8 @@ public class DecrementarEstoqueHandlerTests
         Assert.True(result.Value.Ativo);
         Assert.InRange(result.Value.AtualizadoEm, DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow);
 
-        _gatewayMock.Verify(x => x.Atualizar(It.Is<PecaInsumoEntity>(p => p.QuantidadeEmEstoque == quantidadeEsperada), It.IsAny<CancellationToken>()), Times.Once);
+        _gatewayMock.Verify(x => x.DecrementarEstoque(pecaInsumoId, command.Quantidade, It.IsAny<CancellationToken>()), Times.Once);
+        _gatewayMock.Verify(x => x.Atualizar(It.IsAny<PecaInsumoEntity>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact(DisplayName = "Erro: Peça/insumo não encontrada")]
@@ -133,5 +135,23 @@ public class DecrementarEstoqueHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("PecaInsumo.EstoqueInsuficiente", result.Error.Code);
         Assert.Equal("Quantidade em estoque não pode ficar negativa.", result.Error.Message);
+    }
+
+    [Fact(DisplayName = "Erro: saldo consumido por outra operação (UPDATE condicional não aplicou)")]
+    public async Task Handle_ShouldReturnError_WhenOperacaoAtomicaNaoAplica()
+    {
+        // Arrange
+        var command = new DecrementarEstoqueCommand(PecaInsumoId: Guid.NewGuid(), Quantidade: 3);
+        var pecaInsumoId = new PecaInsumoId(command.PecaInsumoId);
+        PecaInsumoEntity pecaInsumo = PecaInsumoEntity.Criar("Filtro de Óleo", "Descrição", 10, 10, UnidadeDeMedida.Unidade).Value;
+        _gatewayMock.Setup(x => x.ObterPorId(pecaInsumoId, It.IsAny<CancellationToken>())).ReturnsAsync(pecaInsumo);
+        _gatewayMock.Setup(x => x.DecrementarEstoque(pecaInsumoId, 3, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        Assert.True(result.IsFailure);
+        Assert.Equal("PecaInsumo.EstoqueAlteradoPorOutraOperacao", result.Error.Code);
     }
 }

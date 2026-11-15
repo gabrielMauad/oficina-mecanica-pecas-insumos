@@ -2,8 +2,6 @@ using Moq;
 using PecasInsumos.Application.Commands;
 using PecasInsumos.Application.Commands.EstornarEstoqueDoOrcamento;
 using PecasInsumos.Application.Gateways;
-using PecasInsumos.Domain;
-using PecaInsumoEntity = PecasInsumos.Domain.PecaInsumo;
 
 namespace PecasInsumos.Application.Tests.Commands;
 
@@ -14,92 +12,100 @@ public class EstornarEstoqueDoOrcamentoHandlerTests
 
     public EstornarEstoqueDoOrcamentoHandlerTests() => _handler = new EstornarEstoqueDoOrcamentoHandler(_gatewayMock.Object);
 
-    private static PecaInsumoEntity NovaPeca(string nome, int estoque) =>
-        PecaInsumoEntity.Criar(nome, null, 10, estoque, UnidadeDeMedida.Unidade).Value;
-
-    private void ExpoePeca(PecaInsumoEntity peca) =>
+    private void GatewayRetorna(ResultadoMovimentacaoEmLote resultado) =>
         _gatewayMock
-            .Setup(g => g.ObterPorId(It.Is<PecaInsumoId>(id => id.Value == peca.Id.Value), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(peca);
+            .Setup(g => g.MovimentarEstoqueDoOrcamento(
+                It.IsAny<Guid>(), It.IsAny<TipoMovimentacaoOrcamento>(),
+                It.IsAny<IReadOnlyList<ItemEstoque>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(resultado);
 
-    [Fact(DisplayName = "Cenário feliz: estorna todas as peças e atualiza cada uma")]
-    public async Task Handle_DeveEstornarTodasAsPecas()
+    [Fact(DisplayName = "Cenário feliz: envia ao gateway um único estorno do orçamento com todos os itens")]
+    public async Task Handle_DeveEstornarTodosOsItensEmUmaUnicaMovimentacao()
     {
-        var filtro = NovaPeca("Filtro de Óleo", 10);
-        var vela = NovaPeca("Vela", 0);
-        ExpoePeca(filtro);
-        ExpoePeca(vela);
-        var command = new EstornarEstoqueDoOrcamentoCommand(
-            [new ItemEstoque(filtro.Id.Value, 3), new ItemEstoque(vela.Id.Value, 5)]);
+        GatewayRetorna(new ResultadoMovimentacaoEmLote(false, []));
+        var orcamentoId = Guid.NewGuid();
+        var filtro = new ItemEstoque(Guid.NewGuid(), 3);
+        var vela = new ItemEstoque(Guid.NewGuid(), 5);
 
-        var result = await _handler.Handle(command, CancellationToken.None);
+        var result = await _handler.Handle(new EstornarEstoqueDoOrcamentoCommand(orcamentoId, [filtro, vela]), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        Assert.Equal(13, filtro.QuantidadeEmEstoque);
-        Assert.Equal(5, vela.QuantidadeEmEstoque);
-        _gatewayMock.Verify(g => g.Atualizar(filtro, It.IsAny<CancellationToken>()), Times.Once);
-        _gatewayMock.Verify(g => g.Atualizar(vela, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(DesfechoMovimentacaoDoOrcamento.Aplicada, result.Value);
+        _gatewayMock.Verify(g => g.MovimentarEstoqueDoOrcamento(
+            orcamentoId,
+            TipoMovimentacaoOrcamento.Estorno,
+            It.Is<IReadOnlyList<ItemEstoque>>(i => i.Count == 2 && i.Contains(filtro) && i.Contains(vela)),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Fact(DisplayName = "Segunda peça inexistente: falha e nada é atualizado")]
-    public async Task Handle_QuandoSegundaPecaNaoExiste_NaoAtualizaNenhuma()
+    [Fact(DisplayName = "Orçamento já estornado (evento repetido): sucesso com desfecho JaProcessada")]
+    public async Task Handle_QuandoJaProcessado_RetornaJaProcessada()
     {
-        var filtro = NovaPeca("Filtro de Óleo", 10);
-        ExpoePeca(filtro);
-        var inexistente = Guid.NewGuid();
-        var command = new EstornarEstoqueDoOrcamentoCommand(
-            [new ItemEstoque(filtro.Id.Value, 3), new ItemEstoque(inexistente, 1)]);
+        GatewayRetorna(new ResultadoMovimentacaoEmLote(true, []));
 
-        var result = await _handler.Handle(command, CancellationToken.None);
+        var result = await _handler.Handle(
+            new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.NewGuid(), 1)]),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(DesfechoMovimentacaoDoOrcamento.JaProcessada, result.Value);
+    }
+
+    [Fact(DisplayName = "Peça que não comporta o estorno: falha com o motivo da peça")]
+    public async Task Handle_QuandoEstornoExcedeLimite_Falha()
+    {
+        var filtro = Guid.NewGuid();
+        GatewayRetorna(new ResultadoMovimentacaoEmLote(false,
+            [new FalhaMovimentacao(filtro, "Filtro de Óleo", MotivoFalhaMovimentacao.LimiteDeEstoque, int.MaxValue)]));
+
+        var result = await _handler.Handle(
+            new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(filtro, 1)]), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal("PecaInsumo.EstornoDoOrcamentoNaoRealizado", result.Error.Code);
-        Assert.Contains(inexistente.ToString(), result.Error.Message);
-        _gatewayMock.Verify(
-            g => g.Atualizar(It.IsAny<PecaInsumoEntity>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Contains("'Filtro de Óleo'", result.Error.Message);
+        Assert.Contains("ultrapassar", result.Error.Message);
     }
 
-    [Fact(DisplayName = "Peça desativada: falha e nada é atualizado")]
-    public async Task Handle_QuandoPecaDesativada_NaoAtualizaNenhuma()
+    [Fact(DisplayName = "Peça desativada ou inexistente: falha citando cada uma")]
+    public async Task Handle_QuandoPecaDesativadaOuInexistente_Falha()
     {
-        var filtro = NovaPeca("Filtro de Óleo", 10);
-        var vela = NovaPeca("Vela", 10);
-        vela.Desativar();
-        ExpoePeca(filtro);
-        ExpoePeca(vela);
-        var command = new EstornarEstoqueDoOrcamentoCommand(
-            [new ItemEstoque(filtro.Id.Value, 1), new ItemEstoque(vela.Id.Value, 1)]);
+        var desativada = Guid.NewGuid();
+        var inexistente = Guid.NewGuid();
+        GatewayRetorna(new ResultadoMovimentacaoEmLote(false,
+        [
+            new FalhaMovimentacao(desativada, "Vela", MotivoFalhaMovimentacao.Desativada, 4),
+            new FalhaMovimentacao(inexistente, null, MotivoFalhaMovimentacao.NaoEncontrada, 0)
+        ]));
 
-        var result = await _handler.Handle(command, CancellationToken.None);
+        var result = await _handler.Handle(
+            new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(desativada, 1), new ItemEstoque(inexistente, 1)]),
+            CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Contains("desativada", result.Error.Message);
-        _gatewayMock.Verify(
-            g => g.Atualizar(It.IsAny<PecaInsumoEntity>(), It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Contains("não encontrada", result.Error.Message);
     }
 
-    [Fact(DisplayName = "Mesma peça repetida: soma as quantidades e atualiza uma única vez")]
-    public async Task Handle_QuandoPecaRepetida_SomaQuantidades()
-    {
-        var filtro = NovaPeca("Filtro de Óleo", 1);
-        ExpoePeca(filtro);
-        var command = new EstornarEstoqueDoOrcamentoCommand(
-            [new ItemEstoque(filtro.Id.Value, 3), new ItemEstoque(filtro.Id.Value, 4)]);
-
-        var result = await _handler.Handle(command, CancellationToken.None);
-
-        Assert.True(result.IsSuccess);
-        Assert.Equal(8, filtro.QuantidadeEmEstoque);
-        _gatewayMock.Verify(g => g.Atualizar(filtro, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact(DisplayName = "Orçamento sem peças: sucesso sem tocar no estoque")]
+    [Fact(DisplayName = "Orçamento sem peças: sucesso sem tocar no gateway")]
     public async Task Handle_QuandoSemPecas_Sucesso()
     {
-        var result = await _handler.Handle(new EstornarEstoqueDoOrcamentoCommand([]), CancellationToken.None);
+        var result = await _handler.Handle(new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), []), CancellationToken.None);
 
         Assert.True(result.IsSuccess);
-        _gatewayMock.Verify(
-            g => g.Atualizar(It.IsAny<PecaInsumoEntity>(), It.IsAny<CancellationToken>()), Times.Never);
+        _gatewayMock.VerifyNoOtherCalls();
+    }
+
+    [Fact(DisplayName = "Estorno sem baixa registrada: sucesso com desfecho SemBaixaRegistrada")]
+    public async Task Handle_QuandoSemBaixaRegistrada_RetornaSemBaixaRegistrada()
+    {
+        GatewayRetorna(new ResultadoMovimentacaoEmLote(false, [], SemBaixaRegistrada: true));
+
+        var result = await _handler.Handle(
+            new EstornarEstoqueDoOrcamentoCommand(Guid.NewGuid(), [new ItemEstoque(Guid.NewGuid(), 1)]),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(DesfechoMovimentacaoDoOrcamento.SemBaixaRegistrada, result.Value);
     }
 }

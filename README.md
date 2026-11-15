@@ -106,7 +106,7 @@ com outro papel. Corpo e respostas em JSON (camelCase).
 | `POST /api/v1/pecas-insumos` | `{nome, descricao?, preco, quantidadeEmEstoque, unidadeDeMedida}` | `201` com a peça; `422` se inválido ou se já existe peça com o mesmo nome |
 | `GET /api/v1/pecas-insumos` | — | `200` lista de peças |
 | `GET /api/v1/pecas-insumos/{id}` | — | `200`; `404` se não existe |
-| `GET /api/v1/pecas-insumos/{id}/disponibilidade?quantidade={n}` | — | `200 {"disponivel": bool, "precoUnitario": decimal}`; `404` se a peça não existe; `422` se `quantidade` ≤ 0 |
+| `GET /api/v1/pecas-insumos/{id}/disponibilidade?quantidade={n}` | — | `200 {"disponivel": bool, "precoUnitario": decimal}` (`disponivel` é `false` para peça desativada); `404` se a peça não existe; `422` se `quantidade` ≤ 0 |
 | `PATCH /api/v1/pecas-insumos/{id}/descricao` | `{descricao}` | `200`; `422` em falha |
 | `PATCH /api/v1/pecas-insumos/{id}/preco` | `{preco}` | `200`; `422` em falha |
 | `PATCH /api/v1/pecas-insumos/{id}/estoque/entrada` | `{quantidade}` | `200` com o novo saldo; `422` em falha |
@@ -139,11 +139,15 @@ Tabela `pecas_insumos.peca_insumo`:
 | `id` | `uuid` | chave primária |
 | `nome` | `varchar(200)` | obrigatório; único na criação (verificado pela aplicação) |
 | `descricao` | `text` | opcional |
-| `preco_unitario` | `numeric(10,2)` | obrigatório |
-| `quantidade_estoque` | `integer` | padrão `0`; nunca negativa (regra do domínio) |
+| `preco_unitario` | `numeric(10,2)` | obrigatório; a API rejeita (422) valores negativos, acima de 99999999,99 ou com mais de 2 casas decimais |
+| `quantidade_estoque` | `integer` | padrão `0`; nunca negativa nem acima de `int.MaxValue` (regra do domínio e `UPDATE` condicional) |
 | `unidade_medida` | `varchar(20)` | nome do enum `UnidadeDeMedida` |
 | `ativo` | `boolean` | padrão `true`; `DELETE` marca `false` |
 | `created_at`, `updated_at` | `timestamptz` | UTC |
+
+A tabela `movimentacao_orcamento` (`orcamento_id`, `tipo`, `registrada_em`; chave primária composta por
+`orcamento_id` e `tipo`) registra as baixas e os estornos de orçamento já aplicados e garante a
+idempotência.
 
 ## Mensageria: eventos publicados e consumidos
 
@@ -172,19 +176,35 @@ sequenceDiagram
     OS-->>Q: OrcamentoGerado (peças e quantidades)
     Q->>C: entrega
     C->>H: delega ao handler da Application
-    H->>DB: carrega todas as peças (somando itens repetidos)
-    alt todas existem, ativas e com saldo
-        H->>DB: um único SaveChanges (todas as baixas na mesma transação)
-    else alguma peça inexistente, desativada, sem saldo ou item inválido
-        H->>DB: nada é gravado
-        H-->>OS: publica EstoqueBaixaFalhou (motivo por peça)
+    H->>DB: BEGIN; registra (orçamento, Baixa) na tabela de movimentações
+    alt orçamento já registrado (reentrega) ou já estornado
+        H->>DB: ROLLBACK (nada é baixado; sem EstoqueBaixaFalhou)
+    else primeira entrega
+        H->>DB: UPDATE condicional por peça (ativa e saldo suficiente)
+        alt todas as peças foram baixadas
+            H->>DB: COMMIT
+        else alguma peça inexistente, desativada ou sem saldo
+            H->>DB: ROLLBACK (nada é baixado nem registrado)
+            H-->>OS: publica EstoqueBaixaFalhou (motivo por peça)
+        end
     end
 ```
 
-- **Todas as peças ou nenhuma.** O handler carrega todas as peças do orçamento (a mesma peça repetida é
-  somada), aplica a baixa em memória e só então grava; a gravação é **um único `SaveChanges`**, portanto
-  uma única transação. Se qualquer peça não existir, estiver desativada, não tiver saldo ou o item for
-  inválido, nada é gravado e o resultado é uma falha cujo motivo lista cada peça problemática.
+- **Todas as peças ou nenhuma.** Os itens do orçamento (a mesma peça repetida é somada) são aplicados numa
+  única transação do banco. Se qualquer peça não existir, estiver desativada ou não tiver saldo, a
+  transação inteira é desfeita e o resultado é uma falha cujo motivo lista cada peça problemática.
+- **Sem atualização perdida nem overselling.** A baixa de cada peça é um `UPDATE` condicional executado no
+  banco (`SET quantidade_estoque = quantidade_estoque - @q WHERE id = @id AND ativo AND
+  quantidade_estoque >= @q`), nunca "ler o saldo, subtrair em memória e gravar". O banco trava a linha,
+  reavalia a condição sobre o saldo corrente e informa se aplicou; assim baixas concorrentes (várias
+  réplicas, vários consumidores) nunca consomem mais do que o saldo, e não há retry nem token de
+  concorrência a manter. As peças de um lote são processadas em ordem fixa de id, o que evita deadlock
+  entre orçamentos que compartilham peças. A entrada/saída manual e o estorno usam o mesmo tipo de
+  `UPDATE` atômico (a entrada também respeita o limite de `int.MaxValue`).
+- **Idempotente por orçamento.** A tabela `movimentacao_orcamento` tem chave primária
+  (`orcamento_id`, `tipo`), com `tipo` = `Baixa` ou `Estorno`. A linha `Baixa` é inserida na mesma transação da
+  baixa; entregas repetidas ou simultâneas do mesmo `OrcamentoGerado` não inserem de novo e não baixam o
+  estoque outra vez. Uma baixa que falhou é desfeita junto com o registro.
 - **Falha de negócio → `EstoqueBaixaFalhou`.** O evento é publicado diretamente no barramento (nada foi
   persistido, não há o que desfazer) e a OS passa o orçamento a `Rejeitado` **sem** publicar
   `OrcamentoRejeitado`, pois não há o que estornar. O `pagamento` cancela um pagamento `Pendente` do
@@ -198,23 +218,38 @@ sequenceDiagram
 
 Publicado pela OS quando o cliente rejeita o orçamento **ou** quando o pagamento é recusado. O handler
 `IncrementarEstoqueQuandoOrcamentoRejeitado` aplica o mesmo mecanismo em lote, com entrada em vez de
-saída: todas as peças são devolvidas ou nenhuma. Se alguma peça do orçamento não existir ou estiver
-desativada, nada é estornado e a falha é registrada em log de erro (não há evento de compensação do
-estorno).
+saída: todas as peças são devolvidas ou nenhuma. Regras:
+
+- **Idempotente por orçamento** (registro (`orcamento_id`, `Estorno`)): um `OrcamentoRejeitado` repetido ou
+  simultâneo devolve o estoque uma única vez.
+- **Só estorna o que foi baixado.** O estorno exige a linha `Baixa` do mesmo orçamento. Sem ela (por exemplo,
+  a baixa falhou e o `OrcamentoRejeitado` foi processado por corrida), o serviço grava apenas a linha
+  `Estorno`, **não altera o estoque** e registra um aviso em log. Essa linha funciona como marca: uma
+  baixa que chegue depois para o mesmo orçamento é ignorada (sem baixar e sem `EstoqueBaixaFalhou`, pois o
+  orçamento já foi rejeitado).
+- **Serialização por orçamento.** Baixa e estorno gravam linhas diferentes da chave primária, que sozinha
+  não os ordena. Por isso toda movimentação começa com um lock consultivo transacional do PostgreSQL
+  (`pg_advisory_xact_lock` sobre o `orcamento_id`), liberado no commit/rollback: a baixa e o estorno do
+  mesmo orçamento nunca decidem ao mesmo tempo, e cada um enxerga o registro já confirmado do outro.
+  Qualquer que seja a ordem de chegada, o estoque termina como se o orçamento nunca tivesse sido movimentado
+  (baixa seguida de estorno, ou estorno que impede a baixa).
+- **Peça desativada recebe o estoque de volta.** O estorno não exige que a peça esteja ativa; a baixa e a
+  entrada manual continuam exigindo.
+- Se alguma peça do orçamento não existir ou o saldo passasse de `int.MaxValue`, nada é estornado e a falha
+  é registrada em log de erro (não há evento de compensação do estorno).
+- Orçamentos baixados antes da existência da tabela `movimentacao_orcamento` não têm linha `Baixa` e, por
+  isso, deixam de ser estornados automaticamente.
 
 ### Limitações conhecidas
 
 - **Sem outbox.** A falha de negócio da baixa é publicada diretamente depois da decisão, sem persistir
   o evento junto com o banco; se a publicação falhar, o consumer lança exceção e o retry reprocessa a
   baixa. Um outbox é evolução futura.
-- **Sem inbox (reentrega).** Não há deduplicação por `EventId`. Uma reentrega de `OrcamentoGerado` ou de
-  `OrcamentoRejeitado` baixa ou estorna de novo. Numa reentrega de baixa já aplicada, o estoque pode ficar
-  insuficiente e gerar um `EstoqueBaixaFalhou` indevido, fazendo a OS rejeitar o orçamento sem estornar o
-  que a primeira entrega baixou. Evolução futura: tabela de mensagens processadas (inbox).
-- **Sem token de concorrência.** A peça não tem token de concorrência; duas baixas simultâneas da mesma
-  peça (em pods diferentes) podem perder uma atualização (*lost update*). Evolução futura: token de
-  concorrência (`xmin`) no registro da peça, com o conflito caindo no retry do consumer.
+- **Idempotência só de baixa e estorno.** A deduplicação é por orçamento e tipo de movimentação, não por
+  `EventId` de mensagem genérica. Uma baixa que falhou não fica registrada, então uma reentrega dela
+  reavalia o saldo e, no máximo, publica `EstoqueBaixaFalhou` de novo.
 - **Estorno sem compensação.** Uma falha de negócio no estorno só é registrada em log.
+- **Orçamentos anteriores ao registro de movimentações.** Orçamentos baixados antes da tabela `movimentacao_orcamento` não têm linha `Baixa`; se forem rejeitados depois, o estorno não devolve estoque (só registra o aviso).
 
 ## Configuração
 

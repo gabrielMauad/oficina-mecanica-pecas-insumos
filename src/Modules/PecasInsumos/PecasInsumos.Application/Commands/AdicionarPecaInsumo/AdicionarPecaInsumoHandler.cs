@@ -16,7 +16,7 @@ public sealed class AdicionarPecaInsumoHandler : IRequestHandler<AdicionarPecaIn
         if (await _gateway.ExistePorNome(command.Nome, cancellationToken))
             return PecaInsumoErrors.NomeJaExiste;
 
-        UnidadeDeMedida unidadeDeMedida = Enum.Parse<UnidadeDeMedida>(command.UnidadeDeMedida);
+        UnidadeDeMedida unidadeDeMedida = Enum.Parse<UnidadeDeMedida>(command.UnidadeDeMedida, ignoreCase: true);
         Result<PecaInsumo> pecaInsumoResult = PecaInsumo.Criar(
             nome: command.Nome,
             descricao: command.Descricao,

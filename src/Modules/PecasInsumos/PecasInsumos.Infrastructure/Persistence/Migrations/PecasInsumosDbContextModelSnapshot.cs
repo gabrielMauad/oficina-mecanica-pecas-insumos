@@ -23,9 +23,30 @@ namespace PecasInsumos.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("PecasInsumos.Domain.PecaInsumo", b =>
+            modelBuilder.Entity("PecasInsumos.Adapters.DataSources.Records.MovimentacaoOrcamentoRecord", b =>
+                {
+                    b.Property<Guid>("OrcamentoId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("orcamento_id");
+
+                    b.Property<string>("Tipo")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("tipo");
+
+                    b.Property<DateTime>("RegistradaEm")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("registrada_em");
+
+                    b.HasKey("OrcamentoId", "Tipo");
+
+                    b.ToTable("movimentacao_orcamento", "pecas_insumos");
+                });
+
+            modelBuilder.Entity("PecasInsumos.Adapters.DataSources.Records.PecaInsumoRecord", b =>
                 {
                     b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 

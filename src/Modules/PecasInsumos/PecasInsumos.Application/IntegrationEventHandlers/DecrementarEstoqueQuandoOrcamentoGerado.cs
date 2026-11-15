@@ -29,9 +29,19 @@ public sealed class DecrementarEstoqueQuandoOrcamentoGerado : IIntegrationEventH
             .Select(p => new ItemEstoque(p.PecaInsumoId, p.Quantidade))
             .ToList();
 
-        var result = await _sender.Send(new BaixarEstoqueDoOrcamentoCommand(itens), ct);
+        var result = await _sender.Send(new BaixarEstoqueDoOrcamentoCommand(integrationEvent.OrcamentoId, itens), ct);
         if (result.IsSuccess)
+        {
+            if (result.Value == DesfechoMovimentacaoDoOrcamento.JaProcessada)
+            {
+                _logger.LogInformation(
+                    "Baixa de estoque do orçamento {OrcamentoId} da OS {OrdemServicoId} já havia sido realizada ou o orçamento já foi estornado; evento ignorado",
+                    integrationEvent.OrcamentoId,
+                    integrationEvent.OrdemServicoId);
+            }
+
             return;
+        }
 
         _logger.LogWarning(
             "Baixa de estoque não realizada para o orçamento {OrcamentoId} da OS {OrdemServicoId}; nenhuma peça foi baixada: {Motivo}",

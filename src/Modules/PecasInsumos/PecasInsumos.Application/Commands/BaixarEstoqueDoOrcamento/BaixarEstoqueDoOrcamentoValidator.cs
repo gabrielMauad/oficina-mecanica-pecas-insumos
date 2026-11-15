@@ -6,6 +6,9 @@ public sealed class BaixarEstoqueDoOrcamentoValidator : AbstractValidator<Baixar
 {
     public BaixarEstoqueDoOrcamentoValidator()
     {
+        RuleFor(x => x.OrcamentoId)
+            .NotEmpty()
+            .WithMessage("Id do orçamento é obrigatório.");
         RuleFor(x => x.Itens)
             .NotNull()
             .WithMessage("Itens do orçamento são obrigatórios.");

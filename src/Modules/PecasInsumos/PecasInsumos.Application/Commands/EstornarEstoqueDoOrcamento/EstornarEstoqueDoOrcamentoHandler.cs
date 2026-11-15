@@ -1,12 +1,11 @@
 using MediatR;
 using PecasInsumos.Application.Gateways;
-using PecasInsumos.Domain;
 using SharedKernel.Domain;
 
 namespace PecasInsumos.Application.Commands.EstornarEstoqueDoOrcamento;
 
 public sealed class EstornarEstoqueDoOrcamentoHandler
-    : IRequestHandler<EstornarEstoqueDoOrcamentoCommand, Result<IReadOnlyList<PecaInsumo>>>
+    : IRequestHandler<EstornarEstoqueDoOrcamentoCommand, Result<DesfechoMovimentacaoDoOrcamento>>
 {
     private static readonly Error EstornoNaoRealizado = Error.Conflict(
         "PecaInsumo.EstornoDoOrcamentoNaoRealizado",
@@ -16,13 +15,14 @@ public sealed class EstornarEstoqueDoOrcamentoHandler
 
     public EstornarEstoqueDoOrcamentoHandler(IPecaInsumoGateway gateway) => _gateway = gateway;
 
-    public Task<Result<IReadOnlyList<PecaInsumo>>> Handle(
+    public Task<Result<DesfechoMovimentacaoDoOrcamento>> Handle(
         EstornarEstoqueDoOrcamentoCommand command,
         CancellationToken cancellationToken) =>
         AjusteDeEstoqueEmLote.Aplicar(
             _gateway,
+            command.OrcamentoId,
+            TipoMovimentacaoOrcamento.Estorno,
             command.Itens,
-            (peca, quantidade) => peca.Incrementar(quantidade),
             EstornoNaoRealizado,
             cancellationToken);
 }

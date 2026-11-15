@@ -1,6 +1,7 @@
 using Moq;
 using PecasInsumos.Application.Commands.AdicionarPecaInsumo;
 using PecasInsumos.Application.Gateways;
+using PecasInsumos.Domain;
 using SharedKernel.Domain;
 using PecaInsumoEntity = PecasInsumos.Domain.PecaInsumo;
 
@@ -146,5 +147,23 @@ public class AdicionarPecaInsumoHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal("Dinheiro.Negativo", result.Error.Code);
         Assert.Equal("Preço não pode ser negativo.", result.Error.Message);
+    }
+
+    [Theory(DisplayName = "Unidade de medida em qualquer caixa é aceita e normalizada")]
+    [InlineData("litro", UnidadeDeMedida.Litro)]
+    [InlineData("LITRO", UnidadeDeMedida.Litro)]
+    [InlineData("quilograma", UnidadeDeMedida.Quilograma)]
+    public async Task Handle_ShouldAcceptUnidadeDeMedidaIgnoringCase(string unidade, UnidadeDeMedida esperada)
+    {
+        // Arrange
+        var command = new AdicionarPecaInsumoCommand("Óleo de Motor", null, 49.90m, 10, unidade);
+        _gatewayMock.Setup(x => x.ExistePorNome(command.Nome, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        // Act
+        var result = await _handler.Handle(command, CancellationToken.None);
+
+        // Assert
+        Assert.True(result.IsSuccess);
+        Assert.Equal(esperada, result.Value.UnidadeDeMedida);
     }
 }

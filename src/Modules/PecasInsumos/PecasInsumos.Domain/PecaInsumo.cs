@@ -88,6 +88,10 @@ public sealed class PecaInsumo : AggregateRoot<PecaInsumoId>
     {
         if (quantidade <= 0)
             return Error.Validation("PecaInsumo.QuantidadeInvalida", "Quantidade a incrementar deve ser positiva.");
+        if (quantidade > int.MaxValue - QuantidadeEmEstoque)
+            return Error.Validation(
+                "PecaInsumo.EstoqueExcedeLimite",
+                $"Quantidade em estoque não pode ultrapassar {int.MaxValue}.");
         QuantidadeEmEstoque += quantidade;
         AtualizadoEm = DateTime.UtcNow;
         return this;

@@ -1,12 +1,11 @@
 using MediatR;
 using PecasInsumos.Application.Gateways;
-using PecasInsumos.Domain;
 using SharedKernel.Domain;
 
 namespace PecasInsumos.Application.Commands.BaixarEstoqueDoOrcamento;
 
 public sealed class BaixarEstoqueDoOrcamentoHandler
-    : IRequestHandler<BaixarEstoqueDoOrcamentoCommand, Result<IReadOnlyList<PecaInsumo>>>
+    : IRequestHandler<BaixarEstoqueDoOrcamentoCommand, Result<DesfechoMovimentacaoDoOrcamento>>
 {
     private static readonly Error BaixaNaoRealizada = Error.Conflict(
         "PecaInsumo.BaixaDoOrcamentoNaoRealizada",
@@ -16,13 +15,14 @@ public sealed class BaixarEstoqueDoOrcamentoHandler
 
     public BaixarEstoqueDoOrcamentoHandler(IPecaInsumoGateway gateway) => _gateway = gateway;
 
-    public Task<Result<IReadOnlyList<PecaInsumo>>> Handle(
+    public Task<Result<DesfechoMovimentacaoDoOrcamento>> Handle(
         BaixarEstoqueDoOrcamentoCommand command,
         CancellationToken cancellationToken) =>
         AjusteDeEstoqueEmLote.Aplicar(
             _gateway,
+            command.OrcamentoId,
+            TipoMovimentacaoOrcamento.Baixa,
             command.Itens,
-            (peca, quantidade) => peca.Decrementar(quantidade),
             BaixaNaoRealizada,
             cancellationToken);
 }
