@@ -287,10 +287,7 @@ ficar abaixo de 80%** (passo "Gate de cobertura (minimo 80% de linhas)"). Exclus
 host) e `**/obj/**` (código gerado em tempo de build).
 
 - **Gate do CI: 98,3% de cobertura de linhas** (mínimo exigido: 80%), no run da `main` do commit
-  `b47c481`: [run 43552044844](https://github.com/gabrielMauad/oficina-mecanica-pecas-insumos/actions/runs/43552044844).
-  O run da `main` aparece como falho: o job de imagem falha ao carregar as credenciais de sessão da AWS
-  Academy e o deploy é pulado; o `Build & Test` (com o gate de cobertura) está verde — ver
-  [Deploy no EKS](#deploy-no-eks-e-limitação-da-aws-academy).
+  `a44914b`: [run 43663039932](https://github.com/gabrielMauad/oficina-mecanica-pecas-insumos/actions/runs/43663039932).
 - SonarCloud: [análise do projeto](https://sonarcloud.io/project/overview?id=gabrielMauad_oficina-mecanica-pecas-insumos).
 
 ## Documentação da API (OpenAPI/Scalar)
